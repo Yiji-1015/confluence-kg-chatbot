@@ -1,0 +1,9 @@
+# ===== LLM 키 (LiteLLM이 사용) =====
+DEEPSEEK_API_KEY=
+OPENAI_API_KEY=
+
+# ===== 사내 임베딩 API (LiteLLM에 등록) =====
+EMBEDDING_API_URL=
+
+# ===== Neo4j =====
+NEO4J_PASSWORD=kg-password

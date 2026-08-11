@@ -1,0 +1,29 @@
+# 키/시크릿
+.env
+*.env.local
+
+# Java
+backend/build/
+backend/.gradle/
+backend/out/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# 로컬 데이터
+data/
+*.db

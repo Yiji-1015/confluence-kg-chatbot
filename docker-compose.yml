@@ -1,0 +1,62 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: kg-neo4j
+    ports:
+      - "7474:7474"   # Neo4j Browser
+      - "7687:7687"   # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/kg-password
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=1G
+      - NEO4J_server_memory_pagecache_size=512m
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: kg-litellm
+    ports:
+      - "4000:4000"   # LLM/임베딩 게이트웨이
+    volumes:
+      - ./litellm:/app/config
+    command: ["--config", "/app/config/config.yaml", "--port", "4000"]
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  elasticsearch:
+    build: ./elasticsearch   # nori 한국어 분석 플러그인 포함
+    container_name: kg-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: kg-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"   # Kibana UI
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: kg-redis
+    ports:
+      - "6379:6379"   # 캐시/세션 (멀티턴, 임베딩 캐시)
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  es_data:
