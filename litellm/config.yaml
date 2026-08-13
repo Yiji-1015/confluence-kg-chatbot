@@ -13,9 +13,11 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
 
-  # 사내 임베딩 API를 OpenAI 호환 스키마로 등록 (BGE-M3)
-  - model_name: embedding-internal
+  # 로컬 임베딩 서버(TEI)를 OpenAI 호환 스키마로 등록 (BGE-M3, 1024차원)
+  # TEI가 /v1/embeddings 를 제공하므로 openai/ 프로바이더로 그대로 연결
+  # 임베딩은 폴백하지 않음 — 벡터 공간이 달라지면 재색인이 필요 (PLAN §5)
+  - model_name: embedding-local
     litellm_params:
-      model: openai/text-embedding-3-small   # OpenAI 호환 스키마 (실제 모델 아님)
-      api_base: os.environ/EMBEDDING_API_URL
-      api_key: dummy
+      model: openai/bge-m3       # TEI는 모델이 1개라 이름은 라벨 역할
+      api_base: os.environ/EMBEDDING_API_URL   # http://tei:80/v1
+      api_key: dummy             # TEI는 인증 없음
