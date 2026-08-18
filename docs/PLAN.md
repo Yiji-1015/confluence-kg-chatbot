@@ -1,5 +1,7 @@
 # Confluence Knowledge Graph RAG 챗봇 — PLAN v2
 
+> Elasticsearch 런타임, 보안, 인덱스, OpenAI embedding 설정은 [`ELASTICSEARCH.md`](ELASTICSEARCH.md)를 최신 기준으로 사용한다. 아래 TEI/BGE-M3 관련 내용은 이전 설계 기록이다.
+
 > 원본: https://github.com/Yiji-1015/Confluence_Chatbot  
 > 기존 사내 Confluence 온보딩 RAG 챗봇을 기반으로 한 리팩토링 프로젝트
 >
