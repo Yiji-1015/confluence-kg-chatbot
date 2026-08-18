@@ -24,21 +24,6 @@ services:
     command: ["--config", "/app/config/config.yaml", "--port", "4000"]
     env_file:
       - .env
-    depends_on:
-      - tei
-    restart: unless-stopped
-
-  tei:
-    # 로컬 임베딩 서버 (BGE-M3). OpenAI 호환 /v1/embeddings 제공
-    # GPU 환경에서는 cpu-latest 대신 GPU 태그로 교체 (NVIDIA만 지원)
-    # TODO: 배포 전 버전 태그 고정 (PLAN §21)
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
-    container_name: kg-tei
-    command: ["--model-id", "BAAI/bge-m3", "--auto-truncate"]
-    ports:
-      - "8081:80"     # 8080은 Spring Boot가 사용
-    volumes:
-      - tei_data:/data   # 모델 캐시 — 재기동 시 재다운로드 방지
     restart: unless-stopped
 
   elasticsearch:
@@ -75,4 +60,3 @@ services:
 volumes:
   neo4j_data:
   es_data:
-  tei_data:

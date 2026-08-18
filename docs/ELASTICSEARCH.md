@@ -77,6 +77,37 @@ GET /_cluster/health?wait_for_status=yellow&timeout=5s
 
 [Cluster health API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-cluster-health)
 
+## 클러스터, 노드, 인덱스, shard 관계
+
+Elasticsearch에서는 노드가 먼저 클러스터를 구성하고, 인덱스가 primary shard로 나뉘어 노드에 배치된다.
+
+```text
+Elasticsearch cluster
+├── node 1
+│   └── primary shard 0
+├── node 2
+│   └── primary shard 1
+└── node 3
+    └── replica shard 0, 1
+```
+
+- Elasticsearch 프로세스 또는 컨테이너 인스턴스 하나가 Elasticsearch node 하나다.
+- 동일한 `cluster.name`을 사용하는 node들이 Elasticsearch cluster를 구성한다.
+- 인덱스 하나는 여러 node에 걸쳐 저장될 수 있고, node 하나는 여러 인덱스의 shard를 저장할 수 있다.
+- vector는 일반 문서 필드와 함께 shard에 저장된다. kNN 검색은 관련 shard에서 실행되고 결과를 합친다.
+- Kubernetes node와 Elasticsearch node는 다른 개념이다. Kubernetes에서는 보통 Elasticsearch Pod 하나가 Elasticsearch node 하나가 된다.
+
+### Shard 생성과 확장
+
+- `number_of_shards`는 인덱스를 생성할 때 정한다. 데이터 크기가 증가해도 primary shard가 자동으로 추가되지 않는다.
+- Elasticsearch는 생성된 shard를 node에 자동 배치하지만, primary shard 수를 자동 변경하지 않는다.
+- `number_of_replicas`는 실행 중 변경할 수 있다. Replica는 장애 대응과 읽기 처리량에 사용하며 primary와 같은 node에 배치될 수 없다.
+- Primary shard 수를 늘려야 하면 더 많은 shard를 가진 새 버전 인덱스를 만들고 재색인한 뒤 alias를 전환한다. Split API나 rollover는 실제 필요가 확인될 때 검토한다.
+
+현재 초기값은 단일 node에 `1 primary shard / 0 replicas`다. 데이터량, shard 크기, 색인 속도, 검색 latency를 측정한 뒤에만 shard 수를 늘린다.
+
+[Clusters, nodes, and shards](https://www.elastic.co/docs/deploy-manage/distributed-architecture/clusters-nodes-shards)
+
 ## 인덱스 기준
 
 OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
