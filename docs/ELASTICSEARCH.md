@@ -1,6 +1,6 @@
 # Elasticsearch 운영 기준
 
-> 상태: 설계 승인, 구현 전
+> 상태: 구현 완료 (2026-08-19, docker-compose + ai-server 기준 검증됨)
 >
 > 이 문서는 Elasticsearch 런타임과 인덱스 설정의 기준 문서다. `PLAN.md`의 기존 TEI/BGE-M3 관련 값보다 이 문서를 우선한다.
 

@@ -6,17 +6,22 @@ from app.config import settings
 def get_es_client() -> Elasticsearch:
     """
     Elasticsearch 커넥션 클라이언트 객체를 생성하여 반환합니다.
+    ELASTICSEARCH.md 기준: HTTP TLS + 인증이 활성화된 클러스터에 접속한다.
     """
-    return Elasticsearch(settings.ELASTICSEARCH_URL)
+    return Elasticsearch(
+        settings.ELASTICSEARCH_URL,
+        basic_auth=(settings.ELASTICSEARCH_USER, settings.ELASTICSEARCH_PASSWORD),
+        ca_certs=settings.ELASTICSEARCH_CA_CERT,
+    )
 
 
 def create_confluence_index(index_name: Optional[str] = None) -> bool:
     """
     Confluence RAG용 Elasticsearch 인덱스 및 매핑을 생성하는 함수.
-    
+
     [인덱스 매핑 설정]
     1. Nori 한국어 분석기 (nori_analyzer): title, text 필드의 키워드 검색(BM25)용
-    2. Dense Vector (text_vector): 1024차원 BGE-M3 임베딩 벡터 코사인 유사도 검색용
+    2. Dense Vector (text_vector): 1536차원 OpenAI text-embedding-3-small 임베딩 벡터 코사인 유사도 검색용
     """
     target_index = index_name or settings.ELASTICSEARCH_INDEX
     es = get_es_client()
@@ -26,7 +31,7 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
         if es.indices.exists(index=target_index):
             return True
 
-        # Nori 형태소 분석기 및 1024차원 벡터 필드 매핑 정의 (ELASTICSEARCH.md 준수)
+        # Nori 형태소 분석기 및 1536차원 벡터 필드 매핑 정의 (ELASTICSEARCH.md 준수)
         mapping = {
             "settings": {
                 "analysis": {
@@ -47,11 +52,14 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                     "space_key": {"type": "keyword"}, # Confluence Space 식별자
                     "author": {"type": "keyword"},   # 작성자 메타데이터
                     "url": {"type": "keyword"},      # Confluence 문서 원본 URL
+                    "category": {"type": "keyword"}, # 대분류 카테고리 (Confluence 조상 페이지 기준, 예: "솔루션/개발")
+                    "updated_at": {"type": "date"},  # Confluence 문서 최종 수정 시각 (증분 재색인 비교 기준)
+                    "primary_contributor": {"type": "keyword"},  # 버전 히스토리 기준 최다 수정자
                     "chunk_index": {"type": "integer"},
                     "total_chunks": {"type": "integer"},
-                    "text_vector": {                 # BGE-M3 1024차원 임베딩 벡터 필드
+                    "text_vector": {                 # OpenAI text-embedding-3-small 1536차원 임베딩 벡터 필드
                         "type": "dense_vector",
-                        "dims": 1024,
+                        "dims": 1536,
                         "index": True,
                         "similarity": "cosine"       # 코사인 유사도 기반 벡터 연산
                     }
@@ -60,7 +68,7 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
         }
 
         es.indices.create(index=target_index, body=mapping)
-        print(f"[Elasticsearch] 인덱스 '{target_index}' 생성 완료 (Nori 분석기 + 1024차원 Vector 매핑)")
+        print(f"[Elasticsearch] 인덱스 '{target_index}' 생성 완료 (Nori 분석기 + 1536차원 Vector 매핑)")
         return True
 
     except Exception as e:
@@ -96,11 +104,14 @@ def index_document_chunks(
             "space_key": chunk.get("metadata", {}).get("space_key", settings.CONFLUENCE_SPACE_KEY),
             "author": chunk.get("metadata", {}).get("author", "Unknown"),
             "url": chunk.get("metadata", {}).get("url", ""),
+            "category": chunk.get("metadata", {}).get("category", ""),
+            "updated_at": chunk.get("metadata", {}).get("updated_at"),
+            "primary_contributor": chunk.get("metadata", {}).get("primary_contributor", "알 수 없음"),
             "chunk_index": chunk["chunk_index"],
             "total_chunks": chunk["total_chunks"]
         }
 
-        # BGE-M3 1024차원 임베딩 벡터가 함께 전달된 경우 추가
+        # OpenAI text-embedding-3-small 1536차원 임베딩 벡터가 함께 전달된 경우 추가
         if vectors and idx < len(vectors):
             doc_body["text_vector"] = vectors[idx]
 
@@ -133,7 +144,7 @@ def search_hybrid(
     [검색 설계 및 가중치]
     1. BM25 키워드 검색: Nori 분석기로 title과 text 필드 매칭
        - title^2.0: 사내 업무 문서 특성상 제목 매칭이 매우 중요하므로 문서 제목에 2.0배 가중치 부여
-    2. Vector kNN 의미 검색: 1024차원 질문 임베딩 벡터(query_vector)와 text_vector의 코사인 유사도 매칭
+    2. Vector kNN 의미 검색: 1536차원 질문 임베딩 벡터(query_vector)와 text_vector의 코사인 유사도 매칭
     3. 스케일 결합: 정확한 키워드 우선 + 유의어 의미 검색 보조의 순수 점수 결합으로 최상위 top_k 문서 추출
     """
     target_index = index_name or settings.ELASTICSEARCH_INDEX
@@ -219,3 +230,44 @@ def delete_documents_by_ids(doc_ids: List[str], index_name: Optional[str] = None
     except Exception as e:
         print(f"[Elasticsearch Error] 삭제 동기화 처리 실패: {e}")
         return 0
+
+
+def get_indexed_updated_ats(doc_ids: List[str], index_name: Optional[str] = None) -> Dict[str, str]:
+    """
+    [증분 색인용] 이미 색인된 문서들의 저장된 updated_at 값을 doc_id 기준으로 모아서 반환하는 함수.
+
+    Confluence에서 가져온 최신 updated_at과 비교해서, 값이 같으면 재색인을 건너뛰고
+    다르면(또는 아직 색인된 적 없으면) 다시 색인하는 방식으로 임베딩 비용을 아낀다.
+    한 문서는 여러 청크로 쪼개져 저장되지만 updated_at은 문서 단위로 동일하므로,
+    doc_id별 대표값 하나씩만 모으면 된다 (collapse).
+    """
+    if not doc_ids:
+        return {}
+
+    target_index = index_name or settings.ELASTICSEARCH_INDEX
+    es = get_es_client()
+
+    query = {
+        "size": 0,
+        "query": {"terms": {"doc_id": doc_ids}},
+        "aggs": {
+            "by_doc": {
+                "terms": {"field": "doc_id", "size": len(doc_ids)},
+                "aggs": {"latest_updated_at": {"max": {"field": "updated_at"}}}
+            }
+        }
+    }
+
+    try:
+        if not es.indices.exists(index=target_index):
+            return {}
+
+        res = es.search(index=target_index, body=query)
+        buckets = res.get("aggregations", {}).get("by_doc", {}).get("buckets", [])
+        return {
+            bucket["key"]: bucket["latest_updated_at"].get("value_as_string", "")
+            for bucket in buckets
+        }
+    except Exception as e:
+        print(f"[Elasticsearch Error] 기존 updated_at 조회 실패: {e}")
+        return {}

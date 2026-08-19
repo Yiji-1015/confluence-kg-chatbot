@@ -1,4 +1,6 @@
 import httpx
+import pandas as pd
+from collections import Counter
 from typing import List, Dict, Any, Optional
 from app.config import settings
 
@@ -12,15 +14,59 @@ def _get_auth_headers() -> tuple:
     return (email, token)
 
 
+def get_primary_contributor(page_id: str) -> str:
+    """
+    문서의 버전 히스토리 전체를 분석해 "최다 수정자"(primary contributor)를 찾는 함수.
+    작성자(author)와 달리 문서를 실제로 가장 많이 고친 사람을 찾아내므로,
+    Knowledge Graph의 TOP_CONTRIBUTOR 관계(PLAN.md §7) 근거 자료로 쓸 수 있다.
+
+    동률일 경우 가장 최근 수정자를 우선한다.
+    """
+    url = f"{settings.CONFLUENCE_BASE_URL}/rest/api/content/{page_id}/version"
+    params = {"limit": 200}
+    auth = _get_auth_headers()
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(url, params=params, auth=auth)
+            response.raise_for_status()
+            versions = response.json().get("results", [])
+
+        contributors = [
+            v.get("by", {}).get("displayName")
+            for v in versions
+            if v.get("by", {}).get("displayName")
+        ]
+        if not contributors:
+            return "알 수 없음"
+
+        last_modifier = contributors[-1]
+        most_common_contributor, count = Counter(contributors).most_common(1)[0]
+
+        # 동률이면(즉 모든 사람이 1번씩만 수정) 가장 최근 수정자를 우선한다
+        return last_modifier if count == 1 else most_common_contributor
+
+    except Exception as e:
+        print(f"[Confluence Error] 최다 수정자 조회 실패 (ID: {page_id}): {e}")
+        return "알 수 없음"
+
+
 def fetch_all_page_ids(space_key: Optional[str] = None) -> List[str]:
     """
     [삭제 동기화 추적용 함수]
     현재 Confluence에 존재하는 전체 문서의 ID 목록만 빠르게 수집합니다.
     본문을 끌어오지 않고 ID만 수집하므로 1초 이내로 매우 빠르게 동작합니다.
-    
+
     Elasticsearch에 저장된 ID들과 비교(Diffing)하여 삭제된 문서를 감지하는 데 활용됩니다.
+
+    [페이지네이션]
+    한 번의 요청으로는 최대 500개까지만 응답에 담겨오므로, 응답의 _links.next를
+    끝까지 따라가며 전체 목록을 수집합니다.
     """
     target_space = space_key or settings.CONFLUENCE_SPACE_KEY
+    auth = _get_auth_headers()
+    page_ids = []
+
     url = f"{settings.CONFLUENCE_BASE_URL}/rest/api/content"
     params = {
         "spaceKey": target_space,
@@ -28,17 +74,20 @@ def fetch_all_page_ids(space_key: Optional[str] = None) -> List[str]:
         "limit": 500,
     }
 
-    auth = _get_auth_headers()
-    page_ids = []
-
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(url, params=params, auth=auth)
-            response.raise_for_status()
-            data = response.json()
+            while url:
+                response = client.get(url, params=params, auth=auth)
+                response.raise_for_status()
+                data = response.json()
 
-            for item in data.get("results", []):
-                page_ids.append(str(item["id"]))
+                for item in data.get("results", []):
+                    page_ids.append(str(item["id"]))
+
+                # _links.next는 다음 페이지 요청에 필요한 파라미터를 이미 포함한 상대경로
+                next_path = data.get("_links", {}).get("next")
+                url = f"{settings.CONFLUENCE_BASE_URL}{next_path}" if next_path else None
+                params = None  # next_path에 파라미터가 이미 들어있으므로 이후 요청에서는 생략
 
     except Exception as e:
         print(f"[Confluence Error] 전체 페이지 ID 목록 수집 중 오류 발생: {e}")
@@ -58,6 +107,9 @@ def fetch_confluence_pages(
       해당 시각 이후에 새로 수정되거나 생성된 문서만 골라서 증분 수집(Incremental Fetch)합니다.
     """
     target_space = space_key or settings.CONFLUENCE_SPACE_KEY
+    auth = _get_auth_headers()
+    pages = []
+
     url = f"{settings.CONFLUENCE_BASE_URL}/rest/api/content"
     params = {
         "spaceKey": target_space,
@@ -66,33 +118,36 @@ def fetch_confluence_pages(
         "limit": 100
     }
 
-    auth = _get_auth_headers()
-    pages = []
-
     try:
         with httpx.Client(timeout=15.0) as client:
-            response = client.get(url, params=params, auth=auth)
-            response.raise_for_status()
-            data = response.json()
+            while url:
+                response = client.get(url, params=params, auth=auth)
+                response.raise_for_status()
+                data = response.json()
 
-            for item in data.get("results", []):
-                last_updated = item.get("history", {}).get("lastUpdated", {}).get("when")
+                for item in data.get("results", []):
+                    last_updated = item.get("history", {}).get("lastUpdated", {}).get("when")
 
-                # 증분 수집 처리: modified_since 시각 이전의 구 문서면 건너뜀
-                if modified_since and last_updated and last_updated < modified_since:
-                    continue
+                    # 증분 수집 처리: modified_since 시각 이전의 구 문서면 건너뜀
+                    if modified_since and last_updated and last_updated < modified_since:
+                        continue
 
-                page_info = {
-                    "id": str(item["id"]),
-                    "title": item.get("title", ""),
-                    "space_key": target_space,
-                    "html_body": item.get("body", {}).get("storage", {}).get("value", ""),
-                    "author": item.get("history", {}).get("createdBy", {}).get("displayName", "Unknown"),
-                    "version": item.get("version", {}).get("number", 1),
-                    "last_updated": last_updated,
-                    "url": f"{settings.CONFLUENCE_BASE_URL}/spaces/{target_space}/pages/{item['id']}"
-                }
-                pages.append(page_info)
+                    page_info = {
+                        "id": str(item["id"]),
+                        "title": item.get("title", ""),
+                        "space_key": target_space,
+                        "html_body": item.get("body", {}).get("storage", {}).get("value", ""),
+                        "author": item.get("history", {}).get("createdBy", {}).get("displayName", "Unknown"),
+                        "version": item.get("version", {}).get("number", 1),
+                        "last_updated": last_updated,
+                        "url": f"{settings.CONFLUENCE_BASE_URL}/spaces/{target_space}/pages/{item['id']}"
+                    }
+                    pages.append(page_info)
+
+                # _links.next는 다음 페이지 요청에 필요한 파라미터를 이미 포함한 상대경로
+                next_path = data.get("_links", {}).get("next")
+                url = f"{settings.CONFLUENCE_BASE_URL}{next_path}" if next_path else None
+                params = None  # next_path에 파라미터가 이미 들어있으므로 이후 요청에서는 생략
 
     except Exception as e:
         print(f"[Confluence Error] 문서 수집 중 오류 발생: {e}")
@@ -131,3 +186,99 @@ def fetch_page_by_id(page_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[Confluence Error] 단건 페이지 조회 실패 (ID: {page_id}): {e}")
         return None
+
+
+def fetch_pages_by_ids(page_ids: List[str]) -> List[Dict[str, Any]]:
+    """
+    페이지 ID 목록에 대해 본문을 포함한 상세 정보를 조회하는 함수.
+    카테고리 필터링 등으로 이미 대상 ID가 정해진 경우, 스페이스 전체를 다시 훑지 않고
+    필요한 문서만 골라서 가져올 때 사용한다.
+    """
+    pages = []
+    for page_id in page_ids:
+        page = fetch_page_by_id(page_id)
+        if page:
+            pages.append(page)
+    return pages
+
+
+def fetch_pages_with_category(space_key: Optional[str] = None) -> pd.DataFrame:
+    """
+    스페이스의 모든 문서를 "카테고리 경로"와 함께 가져오는 함수. 본문(body)은 가져오지 않고
+    제목/조상(ancestors) 정보만 가져오므로 가볍고 빠르다.
+
+    Confluence는 페이지 조회 시 expand=ancestors 옵션으로 "루트부터 자기 자신 바로 위 부모까지"의
+    조상 페이지 목록을 함께 내려준다. 이를 이용해 문서 하나당 API 호출 한 번으로
+    "대분류 / 중분류 / 문서 제목" 같은 카테고리 경로(path)를 만들 수 있다.
+
+    반환하는 DataFrame에는 다음 컬럼이 있다.
+        - id, title, path (예: "솔루션/개발 / 백엔드 가이드")
+        - level_0, level_1, ... : path를 계층별로 쪼갠 컬럼 (예: level_0="솔루션/개발")
+    """
+    target_space = space_key or settings.CONFLUENCE_SPACE_KEY
+    auth = _get_auth_headers()
+    page_infos = []
+
+    url = f"{settings.CONFLUENCE_BASE_URL}/rest/api/content"
+    params = {
+        "spaceKey": target_space,
+        "type": "page",
+        "expand": "ancestors",
+        "limit": 200,
+    }
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            while url:
+                response = client.get(url, params=params, auth=auth)
+                response.raise_for_status()
+                data = response.json()
+
+                for item in data.get("results", []):
+                    ancestors = item.get("ancestors", [])
+                    # 조상 제목 리스트를 그대로 보존한다. 문자열로 합쳤다가 "/"로 다시 쪼개면
+                    # "솔루션/개발"처럼 제목 자체에 "/"가 포함된 경우 계층이 잘못 나뉘므로
+                    # path 표시용 문자열과 레벨 분리용 리스트를 반드시 따로 다룬다.
+                    title_parts = [a["title"] for a in ancestors] + [item["title"]]
+                    page_infos.append({
+                        "id": str(item["id"]),
+                        "title": item["title"],
+                        "path": " / ".join(title_parts),
+                        "_title_parts": title_parts,
+                    })
+
+                next_path = data.get("_links", {}).get("next")
+                url = f"{settings.CONFLUENCE_BASE_URL}{next_path}" if next_path else None
+                params = None
+
+    except Exception as e:
+        print(f"[Confluence Error] 카테고리 목록 수집 중 오류 발생: {e}")
+
+    df = pd.DataFrame(page_infos)
+    if df.empty:
+        return df
+
+    max_level = df["_title_parts"].apply(len).max()
+    for i in range(max_level):
+        df[f"level_{i}"] = df["_title_parts"].apply(lambda parts, i=i: parts[i] if len(parts) > i else None)
+
+    df = df.drop(columns=["_title_parts"])
+    return df
+
+
+def filter_pages_by_category(df: pd.DataFrame, filters: Dict[str, str]) -> List[str]:
+    """
+    fetch_pages_with_category()가 반환한 DataFrame을 카테고리 레벨 기준으로 필터링해
+    해당 카테고리에 속한 문서 ID 목록만 뽑아내는 함수.
+
+    예: filter_pages_by_category(df, {"level_0": "솔루션/개발"})
+    """
+    if df.empty:
+        return []
+
+    filtered = df
+    for level, value in filters.items():
+        if level in df.columns:
+            filtered = filtered[filtered[level] == value]
+
+    return filtered["id"].astype(str).tolist()

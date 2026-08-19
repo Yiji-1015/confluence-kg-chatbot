@@ -26,28 +26,112 @@ services:
       - .env
     restart: unless-stopped
 
+  # [1/4] TLS 인증서 발급 — "통신 내용을 암호화하는 자물쇠 파일"을 만드는 단계.
+  # 비밀번호(누가 로그인할 수 있는가)와는 전혀 관계없다. elasticsearch/certs가 이미 있으면 재실행하지 않는다.
+  # ELASTICSEARCH.md 기준: TLS 인증서를 부트스트랩 시점에 한 번만 생성한다.
+  es-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: kg-es-setup
+    user: "0"
+    volumes:
+      - ./elasticsearch/certs:/usr/share/elasticsearch/config/certs
+    command: >
+      bash -c '
+        if [ ! -f config/certs/ca/ca.crt ]; then
+          bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
+          unzip -o config/certs/ca.zip -d config/certs;
+        fi;
+        if [ ! -f config/certs/elasticsearch/elasticsearch.crt ]; then
+          bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip \
+            --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key \
+            --name elasticsearch --dns elasticsearch --dns localhost --ip 127.0.0.1;
+          unzip -o config/certs/certs.zip -d config/certs;
+        fi;
+        chmod -R a+r config/certs;
+      '
+
+  # [2/4] Elasticsearch 본체 기동.
+  # 이 컨테이너가 "처음" 뜰 때(=es_data 볼륨이 비어있을 때), 자기 자신의 내장 관리자 계정인
+  # elastic 의 비밀번호를 아래 ELASTIC_PASSWORD 값으로 스스로 초기화한다.
+  # (어디 외부 서버에 "가입"하는 게 아니라, 컨테이너가 자기 로컬 데이터에 비번을 저장하는 것뿐)
+  # 이 값은 .env 에 미리 정해둔 고정값이고, cert 파일과는 무관하게 별도로 주입된다.
   elasticsearch:
     build: ./elasticsearch   # nori 한국어 분석 플러그인 포함
     container_name: kg-elasticsearch
+    depends_on:
+      es-setup:
+        condition: service_completed_successfully
     environment:
+      - node.name=kg-es-01
+      - cluster.name=confluence-kg
       - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}   # elastic 계정(관리자) 비밀번호 — .env 값 그대로 사용
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/elasticsearch/elasticsearch.key
+      - xpack.security.http.ssl.certificate=certs/elasticsearch/elasticsearch.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.key=certs/elasticsearch/elasticsearch.key
+      - xpack.security.transport.ssl.certificate=certs/elasticsearch/elasticsearch.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+    mem_limit: ${ES_MEMORY_LIMIT:-2g}
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"   # 공인 인터페이스에 직접 노출하지 않음 (ELASTICSEARCH.md)
     volumes:
       - es_data:/usr/share/elasticsearch/data
+      - ./elasticsearch/certs:/usr/share/elasticsearch/config/certs
+    healthcheck:
+      test: >
+        curl -s --cacert config/certs/ca/ca.crt
+        -u elastic:${ELASTIC_PASSWORD}
+        "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"
+        | grep -q '"status":"yellow"\|"status":"green"'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
     restart: unless-stopped
 
+  # [3/4] kibana_system 계정 비밀번호 설정.
+  # cert 발급([1/4])과는 완전히 별개의 단계다 — 여기서는 인증서 파일을 다루지 않고,
+  # 이미 떠 있는 Elasticsearch에 elastic 관리자 계정으로 로그인해서
+  # "kibana_system 계정 비밀번호를 KIBANA_PASSWORD 값으로 설정해줘"라고 API(curl) 한 번 호출할 뿐이다.
+  # KIBANA_PASSWORD 자체도 cert처럼 자동 생성되는 게 아니라 .env 에 미리 정해둔 고정값이다.
+  # Kibana는 elastic superuser로 시스템 인덱스에 쓸 수 없어서(부팅 시 거부됨) 이 별도 계정이 필요하다.
+  kibana-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: kg-kibana-setup
+    volumes:
+      - ./elasticsearch/certs:/certs:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command: >
+      curl -s -X POST --cacert /certs/ca/ca.crt
+      -u elastic:${ELASTIC_PASSWORD}
+      -H "Content-Type: application/json"
+      https://elasticsearch:9200/_security/user/kibana_system/_password
+      -d "{\"password\":\"${KIBANA_PASSWORD}\"}"
+
+  # [4/4] Kibana 본체 기동 — [3/4]에서 설정한 kibana_system 계정으로 로그인한다.
   kibana:
     image: docker.elastic.co/kibana/kibana:8.15.0
     container_name: kg-kibana
     environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_HOSTS=https://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}   # [3/4]에서 API로 설정한 것과 같은 값
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=/usr/share/kibana/config/certs/ca/ca.crt
     ports:
-      - "5601:5601"   # Kibana UI
+      - "127.0.0.1:5601:5601"       # 이 컴퓨터 안에서만
+      - "192.168.123.42:5601:5601"  # 같은 LAN(사설 IP)에서도 접속 허용 — 인터넷 공인 IP는 아니므로 ELASTICSEARCH.md 취지와 충돌 없음
+    volumes:
+      - ./elasticsearch/certs:/usr/share/kibana/config/certs:ro
     depends_on:
-      - elasticsearch
+      kibana-setup:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   redis:
