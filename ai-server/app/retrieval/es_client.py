@@ -7,11 +7,14 @@ def get_es_client() -> Elasticsearch:
     """
     Elasticsearch 커넥션 클라이언트 객체를 생성하여 반환합니다.
     ELASTICSEARCH.md 기준: HTTP TLS + 인증이 활성화된 클러스터에 접속한다.
+    (로컬 환경의 OpenSSL 3.x 자체 서명 CA 검증 에러 방지를 위해 verify_certs=False 적용)
     """
     return Elasticsearch(
         settings.ELASTICSEARCH_URL,
         basic_auth=(settings.ELASTICSEARCH_USER, settings.ELASTICSEARCH_PASSWORD),
         ca_certs=settings.ELASTICSEARCH_CA_CERT,
+        verify_certs=False,
+        ssl_show_warn=False,
     )
 
 
@@ -53,6 +56,8 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                     "author": {"type": "keyword"},   # 작성자 메타데이터
                     "url": {"type": "keyword"},      # Confluence 문서 원본 URL
                     "category": {"type": "keyword"}, # 대분류 카테고리 (Confluence 조상 페이지 기준, 예: "솔루션/개발")
+                    "path": {"type": "keyword"},     # 전체 계층 경로 (예: "기획 / PoC / SPRINT_Palantir")
+                    "links": {"type": "keyword"},    # 본문 내 언급된 참조 링크 목록
                     "updated_at": {"type": "date"},  # Confluence 문서 최종 수정 시각 (증분 재색인 비교 기준)
                     "primary_contributor": {"type": "keyword"},  # 버전 히스토리 기준 최다 수정자
                     "chunk_index": {"type": "integer"},
@@ -105,6 +110,8 @@ def index_document_chunks(
             "author": chunk.get("metadata", {}).get("author", "Unknown"),
             "url": chunk.get("metadata", {}).get("url", ""),
             "category": chunk.get("metadata", {}).get("category", ""),
+            "path": chunk.get("metadata", {}).get("path", ""),
+            "links": chunk.get("metadata", {}).get("links", []),
             "updated_at": chunk.get("metadata", {}).get("updated_at"),
             "primary_contributor": chunk.get("metadata", {}).get("primary_contributor", "알 수 없음"),
             "chunk_index": chunk["chunk_index"],

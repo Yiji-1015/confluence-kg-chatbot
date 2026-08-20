@@ -1,3 +1,37 @@
+server:
+  port: 8080
+
 spring:
   application:
-    name: Chatbot
+    name: confluence-kg-chatbot-backend
+
+  # 1. PostgreSQL 데이터베이스 연결 설정 (docker-compose kg-postgres:5432)
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:chatbot_db}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  # 2. JPA & Hibernate 설정 (테이블 자동 생성 및 SQL 로그 포맷팅)
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        default_batch_fetch_size: 100
+    open-in-view: false
+
+  # 3. Redis 연결 설정 (docker-compose kg-redis:6379, 세션 및 캐시)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 3000ms
+
+# 4. Python AI Engine (ai-server:8000) 연동 설정
+ai-engine:
+  base-url: ${AI_ENGINE_URL:http://localhost:8000}
+  timeout-seconds: 60
+

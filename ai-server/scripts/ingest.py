@@ -33,10 +33,10 @@ from app.retrieval.es_client import (
 def ingest(limit: int = None, batch_size: int = 50, category: str = None, force: bool = False) -> None:
     print("[1/5] Confluence 문서 수집 중...")
 
-    # 카테고리(대분류, path의 2번째 조상 = level_1) 정보는 필터 여부와 무관하게 항상 조회해서
-    # 색인되는 모든 문서에 실제 카테고리를 태깅한다.
+    # 카테고리(대분류, level_1) 및 전체 계층 경로(path) 정보 조회
     category_df = fetch_pages_with_category()
     category_map = dict(zip(category_df.get("id", []), category_df.get("level_1", [])))
+    path_map = dict(zip(category_df.get("id", []), category_df.get("path", [])))
 
     if category:
         page_ids = filter_pages_by_category(category_df, {"level_1": category})
@@ -82,10 +82,14 @@ def ingest(limit: int = None, batch_size: int = 50, category: str = None, force:
                 "author": page["author"],
                 "url": page["url"],
                 "category": category_map.get(page["id"], ""),
+                "path": path_map.get(page["id"], ""),
                 "updated_at": page.get("last_updated"),
                 "primary_contributor": primary_contributor,
             },
         )
+        # 본문에서 추출된 참조 링크 목록 추가
+        parsed["metadata"]["links"] = parsed.get("links", [])
+
         chunks = split_text_into_chunks(
             doc_id=page["id"],
             title=page["title"],

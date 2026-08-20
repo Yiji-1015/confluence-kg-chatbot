@@ -6,6 +6,8 @@
 backend/build/
 backend/.gradle/
 backend/out/
+backend/bin/
+bin/
 *.class
 
 # IDE
@@ -27,6 +29,9 @@ frontend/dist/
 # 로컬 데이터
 data/
 *.db
+pre/
+pre
+*.pre
 
 # Elasticsearch TLS 인증서 (es-setup이 부트스트랩 시 생성)
 elasticsearch/certs/

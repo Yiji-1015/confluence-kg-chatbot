@@ -1,8 +1,47 @@
+import re
 import httpx
 import pandas as pd
 from collections import Counter
 from typing import List, Dict, Any, Optional
 from app.config import settings
+
+
+def extract_page_id(url_or_id: str) -> str:
+    """
+    Confluence 링크 URL 또는 pageId 문자열에서 숫자 ID만 추출하는 함수.
+    
+    지원 형식:
+    - https://.../spaces/SPACE/pages/12345678/...
+    - https://.../spaces/SPACE/database/12345678?param=...
+    - https://.../spaces/SPACE/whiteboards/12345678
+    - https://.../pages/viewpage.action?pageId=12345678
+    - 순수 숫자 ID: '12345678'
+    """
+    if not url_or_id:
+        return ""
+    text = str(url_or_id).strip()
+    
+    # 1. 쿼리스트링 pageId=1234
+    match = re.search(r'pageId=(\d+)', text)
+    if match:
+        return match.group(1)
+        
+    # 2. 경로 기반 (/pages/1234, /database/1234, /whiteboard/1234, /folder/1234 등)
+    match = re.search(r'/(?:pages|database|whiteboards?|folder)/(\d+)', text)
+    if match:
+        return match.group(1)
+        
+    # 3. 경로 끝 또는 중간의 4자리 이상 숫자
+    match = re.search(r'/(\d{4,})(?:[/?#]|$)', text)
+    if match:
+        return match.group(1)
+        
+    # 4. 텍스트 내 4자리 이상 독립된 숫자
+    match = re.search(r'\b(\d{4,})\b', text)
+    if match:
+        return match.group(1)
+        
+    return text
 
 
 def _get_auth_headers() -> tuple:
@@ -155,10 +194,15 @@ def fetch_confluence_pages(
     return pages
 
 
-def fetch_page_by_id(page_id: str) -> Optional[Dict[str, Any]]:
+def fetch_page_by_id(page_id_or_url: str) -> Optional[Dict[str, Any]]:
     """
-    특정 페이지 ID 1건에 대한 상세 본문 및 메타데이터 단건 조회 함수.
+    특정 페이지 ID 또는 Confluence URL 1건에 대한 상세 본문 및 메타데이터 단건 조회 함수.
     """
+    page_id = extract_page_id(page_id_or_url)
+    if not page_id:
+        print(f"[Confluence Error] 유효한 page_id를 추출할 수 없습니다: {page_id_or_url}")
+        return None
+
     url = f"{settings.CONFLUENCE_BASE_URL}/rest/api/content/{page_id}"
     params = {
         "expand": "body.storage,version,history.lastUpdated,history.createdBy"

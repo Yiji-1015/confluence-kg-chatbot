@@ -596,7 +596,49 @@ AI 관련 데이터 접근은 Python AI Server를 통해 수행한다.
 
 ---
 
-## 14. 기술 스택
+## 14. 기술 스택 요약
+
+- **Search Engine**: Elasticsearch 8.15 + nori analysis plugin
+- **Embedding**: OpenAI `text-embedding-3-small` (1536 dims)
+- **LLM Gateway**: LiteLLM (Proxy & Fallback)
+- **Primary LLM**: DeepSeek-Chat / OpenAI GPT-4o-mini
+- **Backend Application**: Spring Boot 3.x/4.x (Java 21, Spring Data JPA, RestClient)
+- **AI Server**: Python FastAPI (Async, Langfuse SDK)
+- **Cache & Session**: Redis 7 (30 min TTL sliding window)
+- **RDB**: PostgreSQL 16 (Chat history & audit)
+- **Observability**: Langfuse Cloud (Latency, token, trace)
+- **Graph DB**: Neo4j 5 (Cypher, Graph RAG)
+
+---
+
+## 15. 안전성 및 보안 가드레일 (Safety & Guardrails)
+
+사내 지식베이스 챗봇의 보안성 및 신뢰성을 확보하기 위한 다계층 가드레일 아키텍처:
+
+```text
+[ 사용자 입력 ]
+      │
+      ▼
+[ 1. 입력 가드레일 (Input Guardrails) ]
+  • Prompt Injection / Jailbreak 방어: "시스템 프롬프트를 무시해", "너의 지시사항을 공개해" 등 탈옥 공격 차단
+  • 개인정보(PII) 탐지 및 마스킹: 주민등록번호, 계좌번호, 휴대폰번호 정규식/패턴 마스킹
+  • 입력 길이 제한 및 악성 입력 차단 (Spring Boot @Size + FastAPI 유효성 검증)
+      │
+      ▼
+[ 2. 검색 가드레일 (Retrieval Guardrails) ]
+  • 신뢰도 미달 문서 필터링: 검색 유사도 점수가 기준치(Score Threshold) 이하인 경우 무관한 문서로 배제
+  • Confluence 접근 권한/카테고리 격리
+      │
+      ▼
+[ 3. 생성/출력 가드레일 (Output Guardrails) ]
+  • Hallucination 방지 (Fact-Checking): 주어진 Confluence Context에 없는 정보는 "사내 문서에 없습니다"로 제한
+  • 사내 기밀/민감 정보 유출 방어: API Token, DB 비밀번호, 내부 Secret Key 패턴 출력 차단
+  • 포맷 및 안전성 검증: 올바른 Markdown 링크 형식 유지 및 비속어/비하 발언 필터링
+```
+
+---
+
+## 16. 기술 스택
 
 | 영역 | 기술 |
 |---|---|
@@ -678,40 +720,42 @@ confluence-kg-chatbot/
 
 ### Phase 1 — Retrieval Core
 
-- [ ] Repository 구조 정리
-- [ ] Elasticsearch + Nori
-- [ ] 기존 Confluence parser 이식
-- [ ] 전체 문서 chunking
-- [ ] BGE-M3 embedding
-- [ ] BM25 검색
-- [ ] Vector kNN 검색
-- [ ] Hybrid Retrieval
-- [ ] 기본 Retrieval 평가
+- [x] Repository 구조 정리 (`ai-server`, `elasticsearch`, `litellm`, `docs`, `history`)
+- [x] Elasticsearch + Nori (TLS + 인증 활성화, 8.15.0)
+- [x] Confluence parser 이식 및 개선 (표 그리드 복원, ac:link 내부링크, 첨부파일, 메타데이터 보존)
+- [x] 전체 562개 문서 chunking (2,690개 청크 분할 완료)
+- [x] OpenAI text-embedding-3-small 1536차원 임베딩 (LiteLLM 게이트웨이 연동)
+- [x] BM25 검색 (Nori 형태소 분석기, title^2.0 가중치)
+- [x] Vector kNN 검색 (코사인 유사도)
+- [x] Hybrid Retrieval (BM25 + Dense Vector 결합 검색)
+- [x] Confluence Ingest 배치 스크립트 (`scripts.ingest`, 2,690개 청크 색인 완료)
 
 ### Phase 2 — Application Backend
 
-- [ ] FastAPI Retrieval API
-- [ ] Spring Boot 기본 프로젝트
-- [ ] Spring ↔ FastAPI HTTP 연동
-- [ ] Chat API 구현
-- [ ] Job/API contract 정의
+- [x] FastAPI Internal Chat API (`POST /internal/chat`, API Contract 정의)
+- [x] Spring Boot 기본 프로젝트 (`backend/`, PostgreSQL, Redis, JPA, RestClient)
+- [x] Spring ↔ FastAPI HTTP 연동 (`AiEngineClient` with RestClient)
+- [x] Spring Boot Chat API 구현 (`POST /api/chat`, `GET /api/sessions`, `GET /api/sessions/{id}/messages`)
+- [x] 대화방 UUID 기반 세션 관리 (Redis 5턴 캐시 + Spring Data JPA 영구 저장 Polyglot Persistence)
+- [x] 테스트용 브라우저 웹 UI (`src/main/resources/static/index.html`)
 
 ### Phase 3 — LLM Gateway / Observability
 
-- [ ] LiteLLM 구성
-- [ ] DeepSeek/OpenAI 모델 전환
-- [ ] LLM fallback 검증
-- [ ] Langfuse 연결
-- [ ] LiteLLM generation trace 확인
-- [ ] Python AI pipeline span 설계
+- [x] LiteLLM 구성 (`litellm/config.yaml`, 포트 4000)
+- [x] DeepSeek / OpenAI 모델 라우팅 설정
+- [x] LLM fallback 검증 (`deepseek-chat` -> `gpt-4o-mini`)
+- [x] Langfuse 연결 (`jp.cloud.langfuse.com` Auth & Trace 전송)
+- [x] LiteLLM generation trace 확인
+- [x] Python AI pipeline span 설계 (`@observe` 데코레이터 적용)
+- [ ] 입력/출력 가드레일 (Prompt Injection 방어 및 PII 마스킹)
 
 ### Phase 4 — Multi-turn / Redis
 
-- [ ] Redis session
-- [ ] conversation history
-- [ ] Query Rewrite
+- [x] Redis session (Spring Boot `RedisSessionService` 30분 TTL)
+- [x] conversation history (최근 5턴 슬라이딩 윈도우)
+- [ ] Query Rewrite 지능형 재작성 고도화
 - [ ] embedding cache
-- [ ] TTL 정책 적용
+- [ ] TTL 정책 세분화
 
 ### Phase 5 — Knowledge Graph
 
@@ -722,7 +766,7 @@ confluence-kg-chatbot/
 - [ ] relation intent 판별
 - [ ] Graph + Vector Context Merge
 
-### Phase 6 — Evaluation
+### Phase 6 — Evaluation & Guardrails Testing
 
 - [ ] Langfuse evaluation dataset 생성
 - [ ] BM25 baseline experiment
@@ -733,6 +777,7 @@ confluence-kg-chatbot/
 - [ ] LLM-as-a-Judge 평가
 - [ ] latency / token / cost 측정
 - [ ] retrieval failure 분석
+- [ ] 가드레일 방어율 (Prompt Injection, 탈옥 시도 차단율) 측정
 - [ ] 실패 trace를 evaluation dataset에 재추가
 
 ### Phase 7 — Frontend / Demo

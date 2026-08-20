@@ -13,8 +13,26 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
 
+  # 상위 추론 모델 (짧은 모호 질문 또는 1000자 이상 복잡 컨텍스트용)
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
   # 임베딩은 폴백하지 않음 — 벡터 공간이 달라지면 재색인이 필요 (PLAN §5)
   - model_name: embedding-openai
     litellm_params:
       model: openai/text-embedding-3-small
       api_key: os.environ/OPENAI_API_KEY
+
+# Phase 3: LLM 게이트웨이 Fallback 라우팅 규칙
+router_settings:
+  fallbacks:
+    - deepseek-chat: ["gpt-4o-mini"]   # DeepSeek API 장애 시 GPT-4o-mini로 자동 폴백
+    - gpt-4o: ["deepseek-chat"]        # GPT-4o 장애 시 DeepSeek으로 자동 폴백
+
+# Phase 3: Langfuse 실시간 옵저버빌리티/트레이싱 자동 전송
+litellm_settings:
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+
