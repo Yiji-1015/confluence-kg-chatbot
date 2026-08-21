@@ -15,6 +15,11 @@ def get_es_client() -> Elasticsearch:
         ca_certs=settings.ELASTICSEARCH_CA_CERT,
         verify_certs=False,
         ssl_show_warn=False,
+        # 기본 10s 타임아웃으로는 벡터 필드가 포함된 대량 bulk 색인(수백~수천 문서)이
+        # 자주 Connection timed out으로 실패한다 (2026-08-21 전체 재색인 시 확인됨).
+        request_timeout=60,
+        max_retries=3,
+        retry_on_timeout=True,
     )
 
 
@@ -130,12 +135,39 @@ def index_document_chunks(
         actions.append(action)
 
     try:
-        success_count, _ = helpers.bulk(es, actions)
+        # 벡터 필드가 커서 기본 chunk_size=500이면 요청 하나가 너무 커져 타임아웃나기 쉽다.
+        # 배치를 작게 쪼개고, 클라이언트 request_timeout(60s)과 별개로 재시도도 켜둔다.
+        success_count, _ = helpers.bulk(es, actions, chunk_size=200, raise_on_error=True)
         print(f"[Elasticsearch] 총 {success_count}개 청크 bulk 색인 성공")
         return success_count
     except Exception as e:
         print(f"[Elasticsearch Error] Bulk 색인 중 오류 발생: {e}")
         return 0
+
+
+# BM25:kNN 결합 가중치. 두 점수 모두 0~1로 정규화한 뒤 이 비율로 합산한다.
+_BM25_WEIGHT = 3.0
+_KNN_WEIGHT = 2.0
+
+
+def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    ES hit 리스트의 _score를 chunk_id 기준 0~1 min-max 정규화해서 반환하는 헬퍼 함수.
+    BM25 원시 점수(수십 단위)와 kNN 코사인 유사도(0~1)는 스케일이 전혀 달라서,
+    정규화 없이 그대로 더하면 BM25가 항상 압도해버린다 (2026-08-21 실측으로 확인됨).
+    """
+    if not hits:
+        return {}
+
+    scores = [h["_score"] for h in hits]
+    lo, hi = min(scores), max(scores)
+    span = hi - lo
+
+    normalized = {}
+    for h in hits:
+        chunk_id = h["_source"].get("chunk_id")
+        normalized[chunk_id] = 1.0 if span == 0 else (h["_score"] - lo) / span
+    return normalized
 
 
 def search_hybrid(
@@ -147,15 +179,21 @@ def search_hybrid(
 ) -> List[Dict[str, Any]]:
     """
     BM25 키워드 검색과 Vector kNN 의미 검색을 결합한 하이브리드 검색 함수.
-    
+
     [검색 설계 및 가중치]
     1. BM25 키워드 검색: Nori 분석기로 title과 text 필드 매칭
        - title^2.0: 사내 업무 문서 특성상 제목 매칭이 매우 중요하므로 문서 제목에 2.0배 가중치 부여
     2. Vector kNN 의미 검색: 1536차원 질문 임베딩 벡터(query_vector)와 text_vector의 코사인 유사도 매칭
-    3. 스케일 결합: 정확한 키워드 우선 + 유의어 의미 검색 보조의 순수 점수 결합으로 최상위 top_k 문서 추출
+    3. 점수 결합: BM25와 kNN을 같은 요청에 넣고 raw score를 그냥 더하면 BM25(수십 단위)가
+       kNN(0~1)을 압도해서 사실상 BM25 단독 검색이 되어버린다. 그래서 두 쿼리를 따로 실행해
+       chunk_id 기준으로 각각 0~1 min-max 정규화한 뒤 BM25:kNN = 3:2 가중합으로 재랭킹한다.
+       (ES basic 라이선스는 retriever.rrf를 지원하지 않아 RRF 대신 이 방식을 사용)
     """
     target_index = index_name or settings.ELASTICSEARCH_INDEX
     es = get_es_client()
+
+    # BM25/kNN 각각 top_k보다 넉넉한 후보 풀을 가져와야 재랭킹 시 놓치는 문서가 줄어든다
+    candidate_size = max(top_k * 5, 20)
 
     # 1. BM25 키워드 매칭 쿼리 (제목 가중치 2배 부여)
     bm25_query = {
@@ -176,43 +214,62 @@ def search_hybrid(
     if space_key:
         bm25_query["bool"]["filter"] = [{"term": {"space_key": space_key}}]
 
-    query_body: Dict[str, Any] = {
-        "query": bm25_query,
-        "size": top_k
-    }
+    bm25_hits: List[Dict[str, Any]] = []
+    knn_hits: List[Dict[str, Any]] = []
 
-    # 2. BGE-M3 질문 임베딩 벡터가 존재할 경우 Vector kNN 쿼리 동시 결합
-    if query_vector:
-        query_body["knn"] = {
-            "field": "text_vector",
-            "query_vector": query_vector,
-            "k": top_k,
-            "num_candidates": 50
-        }
-
-    results = []
     try:
-        res = es.search(index=target_index, body=query_body)
-        for hit in res.get("hits", {}).get("hits", []):
-            source = hit["_source"]
-            results.append({
-                "chunk_id": source.get("chunk_id"),
-                "doc_id": source.get("doc_id"),
-                "title": source.get("title"),
-                "text": source.get("text"),
-                "url": source.get("url"),
-                "author": source.get("author"),
-                "category": source.get("category"),
-                "path": source.get("path"),
-                "space_key": source.get("space_key"),
-                "primary_contributor": source.get("primary_contributor"),
-                "score": float(hit.get("_score", 0.0))
-            })
+        bm25_res = es.search(index=target_index, body={"query": bm25_query, "size": candidate_size})
+        bm25_hits = bm25_res.get("hits", {}).get("hits", [])
+
+        if query_vector:
+            knn_query: Dict[str, Any] = {
+                "field": "text_vector",
+                "query_vector": query_vector,
+                "k": candidate_size,
+                "num_candidates": max(candidate_size * 5, 50)
+            }
+            if space_key:
+                knn_query["filter"] = {"term": {"space_key": space_key}}
+            knn_res = es.search(index=target_index, body={"knn": knn_query, "size": candidate_size})
+            knn_hits = knn_res.get("hits", {}).get("hits", [])
 
     except Exception as e:
         print(f"[Elasticsearch Error] 하이브리드 검색 수행 중 오류 발생: {e}")
+        return []
 
-    return results
+    # 2. 각 리스트를 chunk_id 기준 0~1로 정규화
+    bm25_norm = _normalize_scores(bm25_hits)
+    knn_norm = _normalize_scores(knn_hits)
+
+    # 3. chunk_id 기준으로 두 결과를 합치고 3:2 가중합으로 재랭킹
+    merged_sources: Dict[str, Dict[str, Any]] = {}
+    for hit in bm25_hits + knn_hits:
+        chunk_id = hit["_source"].get("chunk_id")
+        if chunk_id and chunk_id not in merged_sources:
+            merged_sources[chunk_id] = hit["_source"]
+
+    scored: List[Dict[str, Any]] = []
+    for chunk_id, source in merged_sources.items():
+        combined_score = (
+            _BM25_WEIGHT * bm25_norm.get(chunk_id, 0.0)
+            + _KNN_WEIGHT * knn_norm.get(chunk_id, 0.0)
+        ) / (_BM25_WEIGHT + _KNN_WEIGHT)
+        scored.append({
+            "chunk_id": source.get("chunk_id"),
+            "doc_id": source.get("doc_id"),
+            "title": source.get("title"),
+            "text": source.get("text"),
+            "url": source.get("url"),
+            "author": source.get("author"),
+            "category": source.get("category"),
+            "path": source.get("path"),
+            "space_key": source.get("space_key"),
+            "primary_contributor": source.get("primary_contributor"),
+            "score": combined_score
+        })
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:top_k]
 
 
 def delete_documents_by_ids(doc_ids: List[str], index_name: Optional[str] = None) -> int:

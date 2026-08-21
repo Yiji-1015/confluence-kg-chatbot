@@ -5,16 +5,17 @@ from app.retrieval.es_client import search_hybrid
 from app.llm.litellm_client import embed_texts, generate_answer
 from app.llm.model_router import select_optimal_model
 
-# Langfuse Observability 트레이싱 데코레이터
+# Langfuse Observability 트레이싱 데코레이터 (SDK v3, OTel 기반)
 try:
-    from langfuse.decorators import observe, langfuse_context
+    from langfuse import observe, get_client
 except ImportError:
     # langfuse 미설치 시 no-op 데코레이터
     def observe(*args, **kwargs):
         def decorator(f):
             return f
         return decorator
-    langfuse_context = None
+    def get_client():
+        return None
 
 # /internal/chat 경로를 처리하는 FastAPI 라우터 정의
 router = APIRouter(prefix="/internal/chat", tags=["Internal Chat AI Engine"])
@@ -37,8 +38,9 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
             override_model=request.model
         )
 
-        if langfuse_context:
-            langfuse_context.update_current_trace(
+        langfuse_client = get_client()
+        if langfuse_client:
+            langfuse_client.update_current_trace(
                 session_id=request.sessionId,
                 input=request.query,
                 tags=["confluence-rag", "hybrid-search", selected_model],
@@ -97,9 +99,9 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
         graph_context = None
 
         # Langfuse 트레이스 즉시 전송 (비동기 버퍼 flush)
-        if langfuse_context:
+        if langfuse_client:
             try:
-                langfuse_context.flush()
+                langfuse_client.flush()
             except Exception:
                 pass
 

@@ -2,9 +2,10 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api.v1.chat import router as chat_router
 
 # Langfuse 환경변수 주입 (Python SDK 자동 인식용)
+# router보다 먼저 실행되어야 함: chat_router가 import되면서 get_client()가 호출되므로
+# 이 주입이 늦으면 SDK가 키 없이 초기화되어 버림
 if settings.LANGFUSE_PUBLIC_KEY:
     os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
 if settings.LANGFUSE_SECRET_KEY:
@@ -12,6 +13,8 @@ if settings.LANGFUSE_SECRET_KEY:
 if settings.LANGFUSE_HOST:
     os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_HOST
     os.environ["LANGFUSE_BASEURL"] = settings.LANGFUSE_HOST
+
+from app.api.v1.chat import router as chat_router
 
 # FastAPI 웹 애플리케이션 생성 및 설명 설정
 app = FastAPI(
