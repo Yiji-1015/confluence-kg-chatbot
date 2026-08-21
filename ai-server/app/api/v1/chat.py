@@ -92,7 +92,8 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
         answer_text = generate_answer(
             query=rewritten_query,
             context=context_text,
-            model=selected_model
+            model=selected_model,
+            history=[{"role": h.role, "content": h.content} for h in (request.history or [])]
         )
 
         # 7. Knowledge Graph 맥락 (Phase 5 전까지는 None)
