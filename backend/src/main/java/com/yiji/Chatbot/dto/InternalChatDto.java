@@ -42,7 +42,7 @@ public class InternalChatDto {
         private String title;
         private String url;
         private String author;
-        private String spaceKey;
+        private String category;
         private Double score;
     }
 

@@ -72,7 +72,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
                         title=item.get("title", "제목 없음"),
                         url=item.get("url", settings.CONFLUENCE_BASE_URL),
                         author=item.get("author") or item.get("primary_contributor") or "Unknown",
-                        spaceKey=item.get("category") or item.get("space_key") or settings.CONFLUENCE_SPACE_KEY,
+                        category=item.get("category") or item.get("space_key") or settings.CONFLUENCE_SPACE_KEY,
                         score=item.get("score", 0.0)
                     )
                 )

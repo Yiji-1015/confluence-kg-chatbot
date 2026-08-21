@@ -202,6 +202,10 @@ def search_hybrid(
                 "text": source.get("text"),
                 "url": source.get("url"),
                 "author": source.get("author"),
+                "category": source.get("category"),
+                "path": source.get("path"),
+                "space_key": source.get("space_key"),
+                "primary_contributor": source.get("primary_contributor"),
                 "score": float(hit.get("_score", 0.0))
             })
 

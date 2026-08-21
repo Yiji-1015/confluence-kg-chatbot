@@ -71,7 +71,7 @@ public class ChatMapper {
                         .title(doc.getTitle())
                         .url(doc.getUrl())
                         .author(doc.getAuthor())
-                        .category(doc.getSpaceKey()) // 스페이스 키 또는 카테고리 매핑
+                        .category(doc.getCategory())
                         .score(doc.getScore())
                         .build())
                 .collect(Collectors.toList());

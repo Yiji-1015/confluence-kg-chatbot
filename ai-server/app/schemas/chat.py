@@ -26,7 +26,7 @@ class SourceDocument(BaseModel):
     title: str = Field(..., description="Confluence 문서 제목")
     url: str = Field(..., description="Confluence 원본 문서 웹 링크 URL")
     author: Optional[str] = Field(default=None, description="문서 작성자 또는 최종 수정자 이름")
-    spaceKey: Optional[str] = Field(default=None, description="Confluence Space 키 (예: LLOYDK)")
+    category: Optional[str] = Field(default=None, description="문서 대분류 카테고리 (Confluence 조상 페이지 기준, 없으면 Space 키로 대체)")
     score: Optional[float] = Field(default=None, description="하이브리드 검색 유사도/정확도 점수")
 
 
