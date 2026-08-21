@@ -147,7 +147,10 @@ def index_document_chunks(
 
 # BM25:kNN 결합 가중치. 두 점수 모두 0~1로 정규화한 뒤 이 비율로 합산한다.
 _BM25_WEIGHT = 3.0
-_KNN_WEIGHT = 2.0
+_KNN_WEIGHT = 7.0
+
+# 문서 하나의 청크를 이어붙일 때 최대 글자 수 (컨텍스트가 무한정 커지는 것 방지)
+_MAX_DOC_TEXT_CHARS = 4000
 
 
 def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
@@ -168,6 +171,32 @@ def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
         chunk_id = h["_source"].get("chunk_id")
         normalized[chunk_id] = 1.0 if span == 0 else (h["_score"] - lo) / span
     return normalized
+
+
+def _fetch_full_doc_text(es: Elasticsearch, index: str, doc_id: str, max_chars: int = _MAX_DOC_TEXT_CHARS) -> str:
+    """
+    같은 문서의 청크 하나만 검색에 걸리면, 정작 답이 있는 다른 청크가 컨텍스트에서
+    빠질 수 있다 (예: "무엇을 할 수 있는가" 청크 대신 "설치 방법" 청크만 뽑히는 경우).
+    검색으로 문서가 한 번 hit하면, 그 문서의 청크를 chunk_index 순으로 이어붙여서
+    최대한 그 문서 전체 맥락을 컨텍스트에 포함시킨다.
+    """
+    res = es.search(index=index, body={
+        "size": 50,
+        "_source": ["text"],
+        "query": {"term": {"doc_id": doc_id}},
+        "sort": [{"chunk_index": "asc"}],
+    })
+
+    parts = []
+    total_len = 0
+    for hit in res.get("hits", {}).get("hits", []):
+        chunk_text = hit["_source"].get("text", "")
+        if total_len >= max_chars:
+            break
+        parts.append(chunk_text)
+        total_len += len(chunk_text)
+
+    return "\n".join(parts)
 
 
 def search_hybrid(
@@ -269,7 +298,27 @@ def search_hybrid(
         })
 
     scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:top_k]
+
+    # 4. top_k "청크"가 아니라 top_k "서로 다른 문서"를 뽑는다. 같은 문서의 청크 여러 개가
+    #    상위권을 독점하면 다른 관련 문서가 밀려나고, 정작 필요한 부분이 담긴 청크는
+    #    top_k 밖으로 빠질 수 있기 때문이다 (2026-08-21 실측: MCP 문서 관련 질문에서
+    #    top_k=3 전부 "설치 방법" 청크만 뽑히고 "기능 목록" 청크는 못 들어온 사례 확인).
+    picked: List[Dict[str, Any]] = []
+    seen_doc_ids = set()
+    for entry in scored:
+        if entry["doc_id"] in seen_doc_ids:
+            continue
+        seen_doc_ids.add(entry["doc_id"])
+        picked.append(entry)
+        if len(picked) >= top_k:
+            break
+
+    # 5. 뽑힌 문서마다 청크를 이어붙여서, 대표로 매칭된 청크 하나가 아니라
+    #    문서 전체 맥락을 컨텍스트로 채운다.
+    for entry in picked:
+        entry["text"] = _fetch_full_doc_text(es, target_index, entry["doc_id"])
+
+    return picked
 
 
 def delete_documents_by_ids(doc_ids: List[str], index_name: Optional[str] = None) -> int:
