@@ -1,6 +1,7 @@
 import httpx
 from typing import List, Optional
 from app.config import settings
+from app.llm.prompts import RAG_SYSTEM_PROMPT
 
 
 def embed_texts(texts: List[str], model: Optional[str] = None) -> List[List[float]]:
@@ -50,8 +51,7 @@ def generate_answer(query: str, context: str, model: Optional[str] = None) -> st
     messages = [
         {
             "role": "system",
-            "content": "당신은 사내 Confluence 문서를 기반으로 답변하는 전문 어시스턴트입니다. "
-                       "주어진 context에 근거해서만 정확하게 답변하고, context에 없는 내용은 모른다고 답하세요.",
+            "content": RAG_SYSTEM_PROMPT,
         },
         {
             "role": "user",
