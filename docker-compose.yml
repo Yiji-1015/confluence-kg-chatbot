@@ -154,6 +154,34 @@ services:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  # Spring Boot 백엔드(챗봇 UI 포함). 호스트에서 맨몸으로 띄우면 firewalld가 8080을
+  # INPUT 체인에서 막아 LAN의 다른 사람이 접속할 수 없다. Docker로 띄우면 Docker가
+  # 컨테이너 포트를 publish할 때 자체 iptables 규칙(FORWARD 체인)을 추가해서
+  # firewalld의 zone 포트 목록을 우회하므로, 방화벽 설정을 건드리지 않고도
+  # 다른 컨테이너(Elasticsearch/Kibana/LiteLLM)처럼 LAN에서 바로 접속 가능해진다.
+  backend:
+    build: ./backend
+    container_name: kg-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # ai-server는 아직 도커화 안 하고 호스트에서 직접 띄우는 중이라, 컨테이너 안에서
+      # 호스트로 나가는 특수 주소(host.docker.internal)로 접근한다 (아래 extra_hosts 참고).
+      - AI_ENGINE_URL=http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
 volumes:
   neo4j_data:
   es_data:
