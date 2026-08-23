@@ -35,3 +35,6 @@ pre
 
 # Elasticsearch TLS 인증서 (es-setup이 부트스트랩 시 생성)
 elasticsearch/certs/
+
+# 연습 및 테스트용 폴더 (Git 제외)
+practice/

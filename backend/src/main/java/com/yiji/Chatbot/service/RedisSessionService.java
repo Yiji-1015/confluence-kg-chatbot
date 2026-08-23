@@ -96,6 +96,29 @@ public class RedisSessionService {
     }
 
     /**
+     * DB에서 복구된 히스토리 전체를 Redis에 적재(Cache-Aside 워밍업)하고 30분 TTL 설정
+     */
+    public void saveHistory(String sessionId, List<InternalChatDto.MessageRole> history) {
+        if (sessionId == null || sessionId.isBlank() || history == null || history.isEmpty()) {
+            return;
+        }
+
+        String key = KEY_PREFIX + sessionId;
+        int maxMessages = DEFAULT_MAX_TURNS * 2;
+        List<InternalChatDto.MessageRole> trimmed = history.size() > maxMessages
+                ? new ArrayList<>(history.subList(history.size() - maxMessages, history.size()))
+                : history;
+
+        try {
+            String json = objectMapper.writeValueAsString(trimmed);
+            redisTemplate.opsForValue().set(key, json, SESSION_TTL_MINUTES, TimeUnit.MINUTES);
+            log.info("[RedisSession] DB 히스토리로 Redis 워밍업 완료 (sessionId: {}, messageCount: {})", sessionId, trimmed.size());
+        } catch (Exception e) {
+            log.error("[RedisSession] 세션 워밍업 저장 실패 (sessionId: {}): {}", sessionId, e.getMessage());
+        }
+    }
+
+    /**
      * 대화방 삭제 시 Redis 세션 캐시 제거
      */
     public void clearSession(String sessionId) {

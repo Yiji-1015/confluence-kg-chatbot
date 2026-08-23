@@ -25,6 +25,9 @@ public class ChatSession {
     @Column(name = "session_id", length = 64)
     private String id;
 
+    @Column(name = "user_id", length = 64)
+    private String userId;
+
     @Column(name = "title", length = 200, nullable = false)
     private String title;
 
@@ -38,8 +41,9 @@ public class ChatSession {
     private List<ChatMessage> messages = new ArrayList<>();
 
     @Builder
-    public ChatSession(String id, String title) {
+    public ChatSession(String id, String userId, String title) {
         this.id = id;
+        this.userId = userId;
         this.title = title;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();

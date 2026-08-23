@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, status
 from app.schemas.chat import ChatRequest, ChatResponse, SourceDocument, GraphContext
 from app.config import settings
-from app.retrieval.es_client import search_hybrid
-from app.llm.litellm_client import embed_texts, generate_answer
+from app.retrieval.es_client import search_hybrid_async
+from app.llm.litellm_client import embed_texts_async, generate_answer_async
 from app.llm.model_router import select_optimal_model
 
 # Langfuse Observability 트레이싱 데코레이터 (SDK v3, OTel 기반)
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/internal/chat", tags=["Internal Chat AI Engine"])
 @observe(name="confluence-rag-chat")
 async def process_chat(request: ChatRequest) -> ChatResponse:
     """
-    Spring Boot 백엔드에서 호출하는 메인 AI RAG 채팅 엔드포인트.
+    Spring Boot 백엔드에서 호출하는 메인 AI RAG 채팅 엔드포인트 (완전한 비동기 논블로킹 처리).
     """
     try:
         # 1. 질문 재작성 (Phase 4 전까지는 사용자 질문 그대로 사용)
@@ -52,12 +52,12 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
                 }
             )
 
-        # 3. 질문 임베딩 생성 (OpenAI text-embedding-3-small via LiteLLM)
-        query_vectors = embed_texts([rewritten_query])
+        # 3. 질문 임베딩 비동기 생성 (OpenAI text-embedding-3-small via LiteLLM)
+        query_vectors = await embed_texts_async([rewritten_query])
         query_vector = query_vectors[0] if query_vectors else None
 
-        # 4. Elasticsearch 하이브리드 검색 수행 (BM25 + Vector kNN)
-        es_results = search_hybrid(
+        # 4. Elasticsearch 하이브리드 검색 비동기 수행 (BM25 + Vector kNN)
+        es_results = await search_hybrid_async(
             query_text=rewritten_query,
             query_vector=query_vector,
             top_k=3
@@ -88,8 +88,8 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
         else:
             context_text = "관련된 사내 Confluence 문서를 찾지 못했습니다."
 
-        # 6. LiteLLM 기반 최종 답변 생성 (동적 라우팅된 모델 사용)
-        answer_text = generate_answer(
+        # 6. LiteLLM 기반 최종 답변 비동기 생성 (동적 라우팅된 모델 사용)
+        answer_text = await generate_answer_async(
             query=rewritten_query,
             context=context_text,
             model=selected_model,

@@ -25,6 +25,24 @@ def embed_texts(texts: List[str], model: Optional[str] = None) -> List[List[floa
     return [item["embedding"] for item in data["data"]]
 
 
+async def embed_texts_async(texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+    """
+    [비동기] LiteLLM 게이트웨이를 통해 텍스트 목록을 임베딩 벡터로 비동기 변환하는 함수.
+    """
+    if not texts:
+        return []
+
+    target_model = model or settings.DEFAULT_EMBEDDING_MODEL
+    url = f"{settings.LITELLM_BASE_URL}/v1/embeddings"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, json={"model": target_model, "input": texts})
+        response.raise_for_status()
+        data = response.json()
+
+    return [item["embedding"] for item in data["data"]]
+
+
 def generate_chat_completion(messages: List[dict], model: Optional[str] = None) -> str:
     """
     임의의 메시지 리스트(System, User, Assistant)를 LiteLLM 게이트웨이(/v1/chat/completions)로 전달해 답변을 생성하는 범용 함수.
@@ -35,6 +53,21 @@ def generate_chat_completion(messages: List[dict], model: Optional[str] = None) 
 
     with httpx.Client(timeout=30.0) as client:
         response = client.post(url, json={"model": target_model, "messages": messages})
+        response.raise_for_status()
+        data = response.json()
+
+    return data["choices"][0]["message"]["content"]
+
+
+async def generate_chat_completion_async(messages: List[dict], model: Optional[str] = None) -> str:
+    """
+    [비동기] LiteLLM 게이트웨이로 전달해 답변을 생성하는 범용 비동기 함수.
+    """
+    target_model = model or settings.DEFAULT_LLM_MODEL
+    url = f"{settings.LITELLM_BASE_URL}/v1/chat/completions"
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(url, json={"model": target_model, "messages": messages})
         response.raise_for_status()
         data = response.json()
 
@@ -64,3 +97,24 @@ def generate_answer(
     })
 
     return generate_chat_completion(messages, model=target_model)
+
+
+async def generate_answer_async(
+    query: str,
+    context: str,
+    model: Optional[str] = None,
+    history: Optional[List[dict]] = None,
+) -> str:
+    """
+    [비동기] LiteLLM 게이트웨이를 통해 검색된 context를 근거로 답변을 생성하는 RAG 전용 비동기 함수.
+    """
+    target_model = model or settings.DEFAULT_LLM_MODEL
+
+    messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+    messages.extend(history or [])
+    messages.append({
+        "role": "user",
+        "content": f"[Context]\n{context}\n\n[질문]\n{query}",
+    })
+
+    return await generate_chat_completion_async(messages, model=target_model)

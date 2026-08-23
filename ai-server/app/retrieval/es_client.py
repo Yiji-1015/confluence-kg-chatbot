@@ -1,3 +1,4 @@
+import asyncio
 from elasticsearch import Elasticsearch, helpers
 from typing import List, Dict, Any, Optional
 from app.config import settings
@@ -319,6 +320,27 @@ def search_hybrid(
         entry["text"] = _fetch_full_doc_text(es, target_index, entry["doc_id"])
 
     return picked
+
+
+async def search_hybrid_async(
+    query_text: str,
+    query_vector: Optional[List[float]] = None,
+    top_k: int = 5,
+    space_key: Optional[str] = None,
+    index_name: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    [비동기] 하이브리드 검색 함수.
+    Elasticsearch 동기 검색을 asyncio.to_thread로 감싸 메인 이벤트 루프 블로킹 없이 실행합니다.
+    """
+    return await asyncio.to_thread(
+        search_hybrid,
+        query_text=query_text,
+        query_vector=query_vector,
+        top_k=top_k,
+        space_key=space_key,
+        index_name=index_name
+    )
 
 
 def delete_documents_by_ids(doc_ids: List[str], index_name: Optional[str] = None) -> int:

@@ -34,6 +34,7 @@ public class ChatMapper {
         }
         return ChatSessionDto.builder()
                 .id(session.getId())
+                .userId(session.getUserId())
                 .title(session.getTitle())
                 .createdAt(session.getCreatedAt())
                 .updatedAt(session.getUpdatedAt())

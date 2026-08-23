@@ -34,12 +34,12 @@ public class ChatController {
     }
 
     /**
-     * 전체 대화방 목록 최신순 조회 API (좌측 사이드바용)
-     * GET /api/sessions
+     * 전체 대화방 목록 최신순 조회 API (좌측 사이드바용, userId 필터링 지원)
+     * GET /api/sessions?userId={userId}
      */
     @GetMapping("/sessions")
-    public ResponseEntity<List<ChatSessionDto>> getSessions() {
-        List<ChatSessionDto> sessions = chatService.getSessions();
+    public ResponseEntity<List<ChatSessionDto>> getSessions(@RequestParam(name = "userId", required = false) String userId) {
+        List<ChatSessionDto> sessions = chatService.getSessions(userId);
         return ResponseEntity.ok(sessions);
     }
 

@@ -23,6 +23,12 @@ public class ChatRequestDto {
      */
     private String sessionId;
 
+    /**
+     * 사용자 식별자 (브라우저 익명 ID 또는 사원 ID)
+     * - 사용자별 대화방 목록을 격리하는 데 사용됩니다.
+     */
+    private String userId;
+
     @NotBlank(message = "질문 내용을 입력해주세요.")
     @Size(max = 1000, message = "질문은 최대 1000자까지 입력 가능합니다.")
     private String query;

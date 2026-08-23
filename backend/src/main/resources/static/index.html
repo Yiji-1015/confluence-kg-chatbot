@@ -109,6 +109,18 @@
         let currentSessionId = null;
         const API_BASE = '/api';
 
+        // 사용자 식별자 관리 (브라우저 LocalStorage 기반 익명 ID)
+        function getUserId() {
+            let userId = localStorage.getItem('confluence_chat_user_id');
+            if (!userId) {
+                userId = (typeof crypto !== 'undefined' && crypto.randomUUID) 
+                    ? crypto.randomUUID() 
+                    : 'user-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+                localStorage.setItem('confluence_chat_user_id', userId);
+            }
+            return userId;
+        }
+
         // DOM 요소
         const sessionListEl = document.getElementById('sessionList');
         const chatMessagesEl = document.getElementById('chatMessages');
@@ -162,6 +174,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         sessionId: currentSessionId,
+                        userId: getUserId(),
                         query: query
                     })
                 });
@@ -194,10 +207,11 @@
             }
         });
 
-        // 3. 대화방 목록 조회 (GET /api/sessions)
+        // 3. 대화방 목록 조회 (GET /api/sessions?userId=...)
         async function loadSessions() {
             try {
-                const res = await fetch(`${API_BASE}/sessions`);
+                const userId = getUserId();
+                const res = await fetch(`${API_BASE}/sessions?userId=${encodeURIComponent(userId)}`);
                 if (!res.ok) return;
                 const sessions = await res.json();
 

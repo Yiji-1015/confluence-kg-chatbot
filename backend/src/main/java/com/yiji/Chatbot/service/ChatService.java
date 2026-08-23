@@ -38,6 +38,7 @@ public class ChatService {
     public ChatResponseDto processChat(ChatRequestDto requestDto) {
         String query = requestDto.getQuery().trim();
         String sessionId = requestDto.getSessionId();
+        String userId = requestDto.getUserId();
 
         // 1. 대화방(Session) 식별 또는 신규 생성
         ChatSession session;
@@ -46,16 +47,18 @@ public class ChatService {
             String initialTitle = generateTitleFromQuery(query);
             session = ChatSession.builder()
                     .id(sessionId)
+                    .userId(userId)
                     .title(initialTitle)
                     .build();
             chatSessionRepository.save(session);
-            log.info("[ChatService] 새 대화방 생성 (sessionId: {}, title: '{}')", sessionId, initialTitle);
+            log.info("[ChatService] 새 대화방 생성 (sessionId: {}, userId: {}, title: '{}')", sessionId, userId, initialTitle);
         } else {
             String finalSessionId = sessionId;
             session = chatSessionRepository.findById(sessionId)
                     .orElseGet(() -> {
                         ChatSession newSession = ChatSession.builder()
                                 .id(finalSessionId)
+                                .userId(userId)
                                 .title(generateTitleFromQuery(query))
                                 .build();
                         return chatSessionRepository.save(newSession);
@@ -63,8 +66,11 @@ public class ChatService {
             session.updateTimestamp();
         }
 
-        // 2. Redis에서 해당 대화방의 최근 멀티턴 대화 기록 조회
+        // 2. Redis에서 해당 대화방의 최근 멀티턴 대화 기록 조회 (만료 시 DB에서 복구하는 Cache-Aside 적용)
         List<InternalChatDto.MessageRole> history = redisSessionService.getRecentHistory(sessionId);
+        if (history.isEmpty()) {
+            history = recoverHistoryFromDb(sessionId);
+        }
 
         // 3. Python AI Engine 호출 (하이브리드 검색 + LiteLLM 답변 생성)
         InternalChatDto.Response aiResponse = aiEngineClient.requestChat(sessionId, query, history);
@@ -102,13 +108,28 @@ public class ChatService {
     }
 
     /**
-     * 전체 대화방 목록 최신순 조회 (좌측 사이드바용)
+     * 전체 대화방 목록 최신순 조회 (사용자별 필터링 지원)
+     */
+    @Transactional(readOnly = true)
+    public List<ChatSessionDto> getSessions(String userId) {
+        List<ChatSession> sessions;
+        if (userId != null && !userId.isBlank()) {
+            sessions = chatSessionRepository.findAllByUserIdOrderByUpdatedAtDesc(userId);
+        } else {
+            sessions = chatSessionRepository.findAllByOrderByUpdatedAtDesc();
+        }
+
+        return sessions.stream()
+                .map(chatMapper::toSessionDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 전체 대화방 목록 최신순 조회 (오버로딩)
      */
     @Transactional(readOnly = true)
     public List<ChatSessionDto> getSessions() {
-        return chatSessionRepository.findAllByOrderByUpdatedAtDesc().stream()
-                .map(chatMapper::toSessionDto)
-                .collect(Collectors.toList());
+        return getSessions(null);
     }
 
     /**
@@ -122,13 +143,48 @@ public class ChatService {
     }
 
     /**
-     * 대화방 삭제 (Redis 세션 및 RDB 데이터 삭제)
+     * 대화방 삭제 (Redis 세션 및 RDB 데이터 안전 삭제)
      */
     @Transactional
     public void deleteSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
         redisSessionService.clearSession(sessionId);
-        chatSessionRepository.deleteById(sessionId);
-        log.info("[ChatService] 대화방 삭제 완료 (sessionId: {})", sessionId);
+        if (chatSessionRepository.existsById(sessionId)) {
+            chatSessionRepository.deleteById(sessionId);
+            log.info("[ChatService] 대화방 삭제 완료 (sessionId: {})", sessionId);
+        } else {
+            log.warn("[ChatService] 삭제 대상 대화방이 존재하지 않습니다 (sessionId: {})", sessionId);
+        }
+    }
+
+    /**
+     * Redis 캐시 만료 시 PostgreSQL 영구 대화 기록에서 최근 대화 히스토리 복원 (최근 5턴 = 10개)
+     */
+    private List<InternalChatDto.MessageRole> recoverHistoryFromDb(String sessionId) {
+        List<ChatMessage> dbMessages = chatMessageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId);
+        if (dbMessages.isEmpty()) {
+            return List.of();
+        }
+
+        int maxMessages = 10;
+        int startIndex = Math.max(0, dbMessages.size() - maxMessages);
+        List<ChatMessage> recentMessages = dbMessages.subList(startIndex, dbMessages.size());
+
+        List<InternalChatDto.MessageRole> history = recentMessages.stream()
+                .map(msg -> InternalChatDto.MessageRole.builder()
+                        .role(msg.getRole().toLowerCase()) // "user" or "assistant"
+                        .content(msg.getContent())
+                        .build())
+                .collect(Collectors.toList());
+
+        if (!history.isEmpty()) {
+            redisSessionService.saveHistory(sessionId, history);
+            log.info("[ChatService] DB 대화 기록에서 Redis 히스토리 복원 완료 (sessionId: {}, count: {})", sessionId, history.size());
+        }
+
+        return history;
     }
 
     /**
