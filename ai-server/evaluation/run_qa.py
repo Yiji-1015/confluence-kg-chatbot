@@ -16,6 +16,12 @@ Langfuse Dataset(confluence-rag-qa-v1)에 대해 실제 RAG 파이프라인(검�
 """
 import os
 import re
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from app.config import settings
 
 if settings.LANGFUSE_PUBLIC_KEY:
@@ -31,7 +37,8 @@ from langfuse.experiment import Evaluation
 from app.retrieval.es_client import search_hybrid
 from app.llm.litellm_client import embed_texts, generate_answer, generate_chat_completion
 
-DATASET_NAME = "confluence-rag-qa-v1"
+DATASET_NAME = "confluence-rag-qa-v2"
+JUDGE_MODEL = "gpt-4o"
 TOP_K = 3
 _SCORE_RE = re.compile(r"SCORE:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 _REASON_RE = re.compile(r"REASON:\s*(.+)", re.IGNORECASE | re.DOTALL)
@@ -99,7 +106,7 @@ def faithfulness_evaluator(*, input, output, expected_output=None, metadata=None
         "0.0(전혀 근거 없음) ~ 1.0(완전히 근거함) 사이 점수를 아래 형식으로만 출력하세요:\n"
         "SCORE: <숫자>\nREASON: <한 줄 이유>"
     )
-    raw = generate_chat_completion([{"role": "user", "content": judge_prompt}])
+    raw = generate_chat_completion([{"role": "user", "content": judge_prompt}], model=JUDGE_MODEL)
     score, reason = _parse_judge_response(raw)
     if score is None:
         return None
@@ -118,7 +125,7 @@ def correctness_evaluator(*, input, output, expected_output=None, metadata=None,
         "0.0(완전히 틀림) ~ 1.0(정확히 일치) 사이 점수를 아래 형식으로만 출력하세요:\n"
         "SCORE: <숫자>\nREASON: <한 줄 이유>"
     )
-    raw = generate_chat_completion([{"role": "user", "content": judge_prompt}])
+    raw = generate_chat_completion([{"role": "user", "content": judge_prompt}], model=JUDGE_MODEL)
     score, reason = _parse_judge_response(raw)
     if score is None:
         return None

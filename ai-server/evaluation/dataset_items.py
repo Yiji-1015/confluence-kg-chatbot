@@ -1,417 +1,577 @@
 """
-Langfuse QA 데이터셋 아이템 정의.
+Langfuse QA 데이터셋 v2 정의 (confluence-rag-qa-v2).
 
-각 아이템은 실제 confluence-openai-v1 인덱스에 들어있는 문서를 근거로 작성했다.
-metadata.expected_doc_ids로 "검색이 정답 문서를 찾았는지"와
-"답변 생성이 맞았는지"를 분리해서 채점할 수 있게 한다.
-
-- expected_doc_ids가 채워진 항목: 특정 문서에서 답이 나와야 하는 일반 질문
-- expected_doc_ids가 빈 리스트인 항목: 관련 문서가 없어야 하는 질문 (환각 방지 검증)
-- metadata.known_gap=True: 파서가 Confluence 임베디드 database 매크로를 못 읽어와서
-  본문이 링크만 남은 문서를 겨냥한 질문 (검색/생성과 무관한 "수집 단계" 갭 진단용)
+- Factoid QA: 실제 Confluence 문서 기반 팩트 검색 및 답변
+- Out-of-Domain QA: 사내 문서에 없는 질문으로 환각/거절 능력 검증
+- Known-gap QA: Confluence DB 매크로 등 본문 부재 문서 링크 안내 검증
 """
 
 QA_DATASET_ITEMS = [
     {
-        "id": 'qa-001',
-        "input": '회사가 2025년에 벤처기업인증을 재선정받은 게 몇 월이야?',
-        "expected_output": '2025년 9월',
-        "metadata": {'expected_doc_ids': ['20709946'], 'category': 'company-history'},
-    },
-    {
-        "id": 'qa-002',
-        "input": '삼성 SDS FabriX Service 파트너 계약은 언제 체결했어?',
-        "expected_output": '2025년 7월',
-        "metadata": {'expected_doc_ids': ['20709946'], 'category': 'company-history'},
-    },
-    {
-        "id": 'qa-003',
-        "input": '우리 회사 직책제에서는 사원/대리/과장 같은 별도 직급이 있어?',
-        "expected_output": '별도 직급 없이 직책제로 운영된다. 조직장은 대표이사/본부장/팀장/CXO, 역할은 PM/PL/AM이며 그 외 인원은 매니저로 호칭이 통일된다.',
-        "metadata": {'expected_doc_ids': ['20710092'], 'category': 'hr-policy'},
-    },
-    {
-        "id": 'qa-004',
-        "input": 'RTX 4090 사내 서버의 IP 주소가 뭐야?',
-        "expected_output": '192.168.123.33',
-        "metadata": {'expected_doc_ids': ['113213442'], 'category': 'infra'},
-    },
-    {
-        "id": 'qa-005',
-        "input": 'RTX 6000 사내 서버에 장착된 GPU 스펙이 뭐야?',
-        "expected_output": 'RTX PRO 6000 Blackwell (96GB) 1장',
-        "metadata": {'expected_doc_ids': ['113213442'], 'category': 'infra'},
-    },
-    {
-        "id": 'qa-006',
-        "input": 'vLLM Inference 서버의 헬스체크 엔드포인트 경로가 뭐야?',
-        "expected_output": '/health',
-        "metadata": {'expected_doc_ids': ['119111726'], 'category': 'infra'},
-    },
-    {
-        "id": 'qa-007',
-        "input": 'text-embedding-inference 서버에서 모델 정보를 조회할 때는 어떤 엔드포인트를 써?',
-        "expected_output": '/info',
-        "metadata": {'expected_doc_ids': ['119111726'], 'category': 'infra'},
-    },
-    {
-        "id": 'qa-008',
-        "input": '사내 MCP 서버 모음에서 confluence-mcp로 뭘 할 수 있어?',
-        "expected_output": 'Confluence 페이지 검색, 새 페이지 작성, 기존 페이지 수정, 댓글 작성 등 Confluence 문서를 Claude가 직접 찾아보고 다루는 작업을 대신할 수 있다.',
-        "metadata": {'expected_doc_ids': ['319782940'], 'category': 'mcp'},
-    },
-    {
-        "id": 'qa-009',
-        "input": '이노포스트의 대표는 누구야?',
-        "expected_output": '정종민',
-        "metadata": {'expected_doc_ids': ['346882050'], 'category': 'partner-eval'},
-    },
-    {
-        "id": 'qa-010',
-        "input": '이노포스트의 2025년 매출은 얼마야?',
-        "expected_output": '약 25.98억원',
-        "metadata": {'expected_doc_ids': ['346882050'], 'category': 'partner-eval'},
-    },
-    {
-        "id": 'qa-011',
-        "input": '이노포스트의 임직원 수는 몇 명이야?',
-        "expected_output": '약 33명',
-        "metadata": {'expected_doc_ids': ['346882050'], 'category': 'partner-eval'},
-    },
-    {
-        "id": 'qa-012',
-        "input": 'Help Desk 운영 방안에서, 답변 정확도를 높이기 위해 어떤 도구로 데이터 기반 분석을 한다고 했어?',
-        "expected_output": 'Metabase와 Grafana를 활용한 데이터 기반 분석',
-        "metadata": {'expected_doc_ids': ['99778599'], 'category': 'project-docs'},
-    },
-    {
-        "id": 'qa-013-gap',
-        "input": '요구사항 정의서에 정의된 기능 요구사항 항목들을 알려줘',
-        "expected_output": '본문에 실제 요구사항 목록이 없고 Confluence 임베디드 데이터베이스로 가는 링크만 있어, 이 내용만으로는 답할 수 없다고 안내해야 한다.',
-        "metadata": {'expected_doc_ids': ['98926740'], 'category': 'known-gap', 'known_gap': True, 'gap_type': 'unparsed_embedded_database'},
-    },
-    {
-        "id": 'qa-014-gap',
-        "input": '구축 일정 관리(WBS) 문서에서 프로젝트 착수일이 언제로 잡혀있어?',
-        "expected_output": '본문에 실제 WBS 일정 데이터가 없고 구글 스프레드시트 링크만 있어, 이 내용만으로는 답할 수 없다고 안내해야 한다.',
-        "metadata": {'expected_doc_ids': ['99778562'], 'category': 'known-gap', 'known_gap': True, 'gap_type': 'unparsed_embedded_database'},
-    },
-    {
-        "id": 'qa-015-nodoc',
-        "input": '우리 회사 점심 식대 지원 정책이 어떻게 돼?',
-        "expected_output": '관련된 사내 문서를 찾을 수 없어 답할 수 없다고 안내해야 한다.',
-        "metadata": {'expected_doc_ids': [], 'category': 'out-of-domain'},
-    },
-    {
-        "id": 'qa-016-nodoc',
-        "input": '오늘 서울 날씨 어때?',
-        "expected_output": 'Confluence 문서 기반 챗봇이므로 답변할 수 없는 질문이라고 안내해야 한다.',
-        "metadata": {'expected_doc_ids': [], 'category': 'out-of-domain'},
-    },
-    {
-        "id": 'qa-017',
-        "input": '사업기획팀 Demo 구축 기획안에서 신규 데모 개발의 목적은 무엇인가요?',
-        "expected_output": '신규 데모 개발의 목적은 현재 보유 데모만으로는 특정 업무/사례에 대한 시연이 어려운 영역이 존재하므로, 부족한 사례 데모를 신규 개발하여 데모 포트폴리오를 확장하고자 하는 것입니다.',
-        "metadata": {'expected_doc_ids': ['117964974'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-018',
-        "input": '사업기획팀 영업용 데모 문서에서 현재 시연 가능한 기존 데모의 링크는 무엇인가요?',
-        "expected_output": '현재 시연 가능한 기존 데모의 링크는 https://lloydk.atlassian.net/wiki/x/8gA6B 입니다.',
-        "metadata": {'expected_doc_ids': ['118128642'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-019',
-        "input": '이 문서는 어떤 용도로 작성된 템플릿인가요?',
-        "expected_output": '이 문서는 제안서와 제언서의 형식을 표준화하여 제안 품질을 높이고 작업 리소스를 절감하기 위한 템플릿입니다.',
-        "metadata": {'expected_doc_ids': ['118325442'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-020',
-        "input": '사업기획팀 데모 사이트의 서버 정보에서 Main Server의 IP 주소는 무엇인가요?',
-        "expected_output": 'Main Server의 IP 주소는 192.168.123.42입니다.',
-        "metadata": {'expected_doc_ids': ['135921727'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-021',
-        "input": '2026년 2월 9일 사업기획팀의 데모 구축 관련 회의에서 논의된 아이디어는 무엇인가요?',
-        "expected_output": '회의에서는 공통 모듈을 여러 도메인에 적용하는 방향으로 재정립하고, 프롬프트와 화면단은 도메인 맞춤형으로 진행하되 기능은 공통으로 쓰는 방안이 논의되었습니다.',
-        "metadata": {'expected_doc_ids': ['145522689'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-022',
-        "input": '사업기획팀 데모 로드맵의 MVP 데모 제작 목표는 무엇인가요?',
-        "expected_output": 'MVP 데모 제작의 목표는 고객의 Pain Point를 검증하는 것입니다.',
-        "metadata": {'expected_doc_ids': ['145784858'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-023',
-        "input": '회의에서 논의된 공통 모듈 개발에 대한 의견은 무엇인가요?',
-        "expected_output": '공통 모듈의 경우 MVP 개발 때부터 고려하여 개발하면 시간 소요가 과대해질 수 있다는 의견이 제시되었으며, 재사용 측면에서 데모 개발 소요 시간 최적화로 접근하자는 제안이 있었습니다.',
-        "metadata": {'expected_doc_ids': ['146636802'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-024',
-        "input": '회의록에서 다룬 데모의 본질은 무엇인가요?',
-        "expected_output": "회의록에서는 데모의 본질을 기술적 완결성보다는 고객의 니즈를 자극하고 시각적으로 설득할 수 있는 '시연용 기능' 구현에 우선순위를 둔다고 규정했습니다.",
-        "metadata": {'expected_doc_ids': ['150208519'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-025',
-        "input": '프로젝트명과 발주처 또는 고객사명은 무엇인가요?',
-        "expected_output": '문서에 프로젝트명과 발주처/고객사명에 대한 구체적인 정보는 기재되어 있지 않습니다.',
-        "metadata": {'expected_doc_ids': ['179339320'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-026',
-        "input": '260319 현대캐피탈 AI 통합 추론/실행 플랫폼 구축 프로젝트의 사업 목적은 무엇인가요?',
-        "expected_output": '전사에 분산된 AI/ML 모델과 에이전트를 통합하고, 실시간 성과관리·지속적 진화·보안/규제 준수 체계를 갖춘 AI-First 운영 플랫폼을 구축하는 것입니다.',
-        "metadata": {'expected_doc_ids': ['180355073'], 'category': '기획'},
-    },
-    {
-        "id": 'qa-027',
-        "input": '회의록에서 언급된 2차 개발 범위에는 어떤 내용이 포함되나요?',
-        "expected_output": '2차 개발 범위에는 첨부파일 포함 확장, 첨부 문서 텍스트화, 첨부파일 기반 검색/요약 기능이 포함됩니다.',
-        "metadata": {'expected_doc_ids': ['103874565'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-028',
-        "input": '25.12.23 내부 데이터 파악 회의에서 프로모션 실행 여부의 최종 결정권자는 누구인가요?',
-        "expected_output": '프로모션 실행 여부의 최종 결정권자는 대표입니다.',
-        "metadata": {'expected_doc_ids': ['107741206'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-029',
-        "input": '델 AI 워크스테이션 중 어떤 제품이 중견기업(300~500명)에 적합한가요?',
-        "expected_output": '고급형 델 AI 워크스테이션이 중견기업에 적합합니다.',
-        "metadata": {'expected_doc_ids': ['108331521'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-030',
-        "input": '어플라이언스 2차 결과 보고서에서 측정해야 하는 답변 품질의 기준은 무엇입니까?',
-        "expected_output": '답변 품질 측정은 검색, 요약, 분류, 번역의 총 4가지 항목으로 구분되며, 특히 검색(RAG)에 중점을 두고 나머지는 벤치마크 수준으로 평가합니다.',
-        "metadata": {'expected_doc_ids': ['108396835'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-031',
-        "input": '어플라이언스 추가 테스트 Todo-list 문서에 포함된 액션 플랜 데드라인은 언제인가요?',
-        "expected_output": '테스트 일정 구체화는 2025년 12월 31일로 설정되어 있습니다.',
-        "metadata": {'expected_doc_ids': ['108397422'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-032',
-        "input": '테스트테스트 문서에서 언급된 회의 주제는 무엇인가요?',
-        "expected_output": '문서 내에서 구체적인 회의 주제에 대한 언급은 없습니다.',
-        "metadata": {'expected_doc_ids': ['111902796'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-033',
-        "input": 'GB10에 최신 버전 Do 솔루션을 재설치하는 데 얼마나 걸릴 것으로 예상되나요?',
-        "expected_output": '최소 6시간이 소요될 것으로 예상합니다.',
-        "metadata": {'expected_doc_ids': ['114786318'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-034',
-        "input": '팔란티어 관련 자료들은 어떤 종류의 문서인가요?',
-        "expected_output": '팔란티어와 관련된 세미나 및 기술 자료의 링크 모음입니다.',
-        "metadata": {'expected_doc_ids': ['128188451'], 'category': 'Project'},
-    },
-    {
-        "id": 'qa-035',
-        "input": '피앤씨팀 2026년 2월 23일자 주간 미팅에서 미팅일시는 언제인가요?',
-        "expected_output": '미팅일시는 2026-02-23 (월) 오후 1시입니다.',
-        "metadata": {'expected_doc_ids': ['155811842'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-036',
-        "input": 'PnC 팀 2026년 2월 23일자 주간 미팅의 미팅일시는 언제인가요?',
-        "expected_output": '미팅일시는 2026년 2월 23일(월) 오후 1시입니다.',
-        "metadata": {'expected_doc_ids': ['156008510'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-037',
-        "input": '2026년 3월 9일자 세일즈 주간 미팅에서는 어떤 주요 의사결정 사항들이 논의되었나요?',
-        "expected_output": '세일즈 주간 미팅에서는 SDS CS 챗봇 구축 프로젝트 인력 준비, LG유플러스 로그 모니터링 2차 사업 진행 계획, 삼성전자 DS 피플팀 RAG 구축 운영 인력 수급이 주요 의사결정 사항으로 논의되었습니다.',
-        "metadata": {'expected_doc_ids': ['163021044'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-038',
-        "input": '주간 미팅은 언제 개최되나요?',
-        "expected_output": '주간 미팅은 2026-03-03 (월) 오후 5시에 개최됩니다.',
-        "metadata": {'expected_doc_ids': ['163250188'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-039',
-        "input": '인천대전환tf 팀의 2026년 3월 3일자 주간 미팅은 언제 진행되었나요?',
-        "expected_output": '2026년 3월 3일 오후 5시에 진행되었습니다.',
-        "metadata": {'expected_doc_ids': ['163479618'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-040',
-        "input": '20260310_워크샵 미팅_워크샵tf의 기본 회의록 작성 시 설정해야 하는 점은 무엇인가요?',
-        "expected_output": '기본 회의록 작성 시, Page Restriction 설정은 원칙적으로 제한해야 합니다.',
-        "metadata": {'expected_doc_ids': ['163545122'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-041',
-        "input": '2026년 3월 9일자 리더 미팅에서 어떤 참석자가 있었나요?',
-        "expected_output": '정종균 부사장, 김창수 이사, 이재욱 이사, 홍준호 부장, 서진환 부장이 참석했습니다.',
-        "metadata": {'expected_doc_ids': ['163708934'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-042',
-        "input": '주간 미팅은 언제 열리나요?',
-        "expected_output": '주간 미팅은 2026-03-03 (월) 오후 5시에 열립니다.',
-        "metadata": {'expected_doc_ids': ['163741736'], 'category': '팀 회의록 (공개 운영 중)'},
-    },
-    {
-        "id": 'qa-043',
-        "input": '신규입사자 온보딩 가이드의 목적은 무엇인가요?',
-        "expected_output": '본 문서는 신규입사자 및 기존 멤버들의 원활한 적응과 성장을 지원하기 위한 공식 온보딩 문서입니다.',
-        "metadata": {'expected_doc_ids': ['101220355'], 'category': 'LLOYDK에 오신 걸 환영합니다!'},
-    },
-    {
-        "id": 'qa-044',
-        "input": '2026년도부터 종합건강검진 제도의 지원 대상자는 누구인가요?',
-        "expected_output": '2026년도부터 종합건강검진 지원 대상자는 전 임직원(정규직)입니다.',
-        "metadata": {'expected_doc_ids': ['102793224'], 'category': 'LLOYDK에 오신 걸 환영합니다!'},
-    },
-    {
-        "id": 'qa-045',
-        "input": '오전 반반차를 사용하면 몇 시에 퇴근하게 되나요?',
-        "expected_output": '오전 반반차를 사용하면 18:00에 퇴근하게 됩니다.',
-        "metadata": {'expected_doc_ids': ['102858780'], 'category': 'LLOYDK에 오신 걸 환영합니다!'},
-    },
-    {
-        "id": 'qa-046',
-        "input": 'Refresh 휴가는 몇 년마다 제공되나요?',
-        "expected_output": 'Refresh 휴가는 3년마다 1회 제공됩니다.',
-        "metadata": {'expected_doc_ids': ['105021485'], 'category': 'LLOYDK에 오신 걸 환영합니다!'},
-    },
-    {
-        "id": 'qa-047',
-        "input": '생일 반차 제도를 이용할 수 있는 대상은 누구인가요?',
-        "expected_output": '생일 반차 제도는 재직 중인 전 임직원을 대상으로 제공합니다.',
-        "metadata": {'expected_doc_ids': ['105152631'], 'category': 'LLOYDK에 오신 걸 환영합니다!'},
-    },
-    {
-        "id": 'qa-048',
-        "input": '연말정산의 제출기한은 언제인가요?',
-        "expected_output": '2026년 2월 2일 월요일 오후 6시까지입니다.',
-        "metadata": {'expected_doc_ids': ['127041541'], 'category': 'LLOYDK에 오신 걸 환영합니다!'},
-    },
-    {
-        "id": 'qa-049',
-        "input": '사내 서버에서 사용되는 컨테이너 화일 경로는 무엇인가요?',
-        "expected_output": '/home/lloydk/lk-parser/docker-compose.yml, /home/lloydk/lk-parser/docker-compose.infinity-addon.yml, /root/tei/docker-compose.yaml, /home/whisperlivekit/app/compose.local.yml 등입니다.',
-        "metadata": {'expected_doc_ids': ['119013427'], 'category': '솔루션/개발'},
-    },
-    {
-        "id": 'qa-050',
-        "input": 'HashiCorp 자격증 취득현황 문서에서 Assosiate 자격증 항목에 해당하는 자격증 종류는 무엇인가요?',
-        "expected_output": "Assosiate 자격증 항목에서는 'HashiCorp Certified: Vault Associate' 자격증 종류가 있습니다.",
-        "metadata": {'expected_doc_ids': ['164200452'], 'category': '솔루션/개발'},
-    },
-    {
-        "id": 'qa-051',
-        "input": '정보처리기사 자격증에 대한 어떤 내용이 문서에 포함되어 있나요?',
-        "expected_output": '문서에는 정보처리기사 자격증 취득현황과 관련된 표가 포함되어 있으며, 자격증 종류, 이름, 취득일 등의 정보가 나열될 수 있습니다.',
-        "metadata": {'expected_doc_ids': ['241697034'], 'category': '솔루션/개발'},
-    },
-    {
-        "id": 'qa-052',
-        "input": 'DO 2.0 API 활용 교육의 주요 목적은 무엇인가요?',
-        "expected_output": 'DO 2.0 RAG 기능의 API를 활용해 포털, 챗봇, 검색기를 구현하는 방법을 확인하는 것입니다.',
-        "metadata": {'expected_doc_ids': ['367034372'], 'category': '솔루션/개발'},
-    },
-    {
-        "id": 'qa-053',
-        "input": 'AWS 자격증 취득현황 문서에서 Practitioner 자격증의 취득일과 만료일 정보는 어떻게 기록하나요?',
-        "expected_output": 'Practitioner 자격증의 취득일과 만료일 정보는 각각 DD/MM/YYYY 형식으로 기록해야 합니다.',
-        "metadata": {'expected_doc_ids': ['50102383'], 'category': '솔루션/개발'},
-    },
-    {
-        "id": 'qa-054',
-        "input": 'Elastic Certified Engineer 자격증의 취득일과 만료일은 어떤 형식으로 기록되나요?',
-        "expected_output": '취득일과 만료일은 //DD/MM/YYYY 형식으로 기록됩니다.',
-        "metadata": {'expected_doc_ids': ['50331651'], 'category': '솔루션/개발'},
-    },
-    {
-        "id": 'qa-055',
-        "input": 'AI데이터센터 정기모집의 신청 마감일은 언제인가요?',
-        "expected_output": 'AI데이터센터 정기모집의 신청 마감일은 12월 29일입니다.',
-        "metadata": {'expected_doc_ids': ['100859946'], 'category': '피앤씨'},
-    },
-    {
-        "id": 'qa-056',
-        "input": '2025년 4분기 타운홀 문서에는 어떤 발표 자료가 포함되어 있나요?',
-        "expected_output": 'CEO 발표, COO 발표, CGO 발표가 포함되어 있습니다.',
-        "metadata": {'expected_doc_ids': ['108397222'], 'category': '피앤씨'},
-    },
-    {
-        "id": 'qa-057',
-        "input": '2025년 3분기 타운홀에는 어떤 발표자가 포함되어 있나요?',
-        "expected_output": 'CEO, COO, CGO, CSO, CCO 발표자가 포함되어 있습니다.',
-        "metadata": {'expected_doc_ids': ['108397260'], 'category': '피앤씨'},
-    },
-    {
-        "id": 'qa-058',
-        "input": 'LLOYDK 세미나는 어떤 목적으로 진행되나요?',
-        "expected_output": 'LLOYDK 세미나는 지식 공유 및 발표 기술 향상을 목적으로 진행됩니다.',
-        "metadata": {'expected_doc_ids': ['20808354'], 'category': '마케팅'},
-    },
-    {
-        "id": 'qa-059',
-        "input": '2026 월드IT쇼 DB 리스트 문서의 후속 액션 플랜에서 회사소개서 발송 일정은 언제인가요?',
-        "expected_output": '발송 일정은 04/30입니다.',
-        "metadata": {'expected_doc_ids': ['236650576'], 'category': '마케팅'},
-    },
-    {
-        "id": 'qa-060',
-        "input": '2026 AI EXPO DB 리스트 문서에서 설문조사 내 소개자료 수신 동의자의 회사소개서 발송 일정은 언제인가요?',
-        "expected_output": '발송 일정은 05/14 오전 9시입니다.',
-        "metadata": {'expected_doc_ids': ['250740739'], 'category': '마케팅'},
-    },
-    {
-        "id": 'qa-061',
-        "input": '커뮤니케이션 가이드 문서에서 기술 관련 커뮤니케이션에서 답변에 확신이 없을 때는 어떻게 대응해야 하나요?',
-        "expected_output": '해당 답변은 공식적인 답변이 아님을 명확히 설명하고, 확답이 필요할 경우 공식 채널(예: Elastic Support)을 통해 확인 후 전달하라고 안내합니다.',
-        "metadata": {'expected_doc_ids': ['25723017'], 'category': '커뮤니케이션 가이드'},
-    },
-    {
-        "id": 'qa-062',
-        "input": '입사 후 8개월 동안 어떤 업무를 수행하였나요?',
-        "expected_output": '입사 후 8개월 동안 제안/제언 작업, 데모 구현, 기술세미나 자료 제작 지원, 행사 부스 지원, 팀빌딩 프로그램 기획 및 운영 등의 업무를 수행하였습니다.',
-        "metadata": {'expected_doc_ids': ['254148627'], 'category': '피드백 세션'},
-    },
-    {
-        "id": 'qa-063',
-        "input": '솔루션팀 기술 스택 가이드에서 네트워크 기초의 핵심 개념 중 어떤 것들이 포함되어 있나요?',
-        "expected_output": '네트워크 기초의 핵심 개념으로는 DNS, 로드밸런싱, 방화벽, 포트, VPN 등이 포함되어 있습니다.',
-        "metadata": {'expected_doc_ids': ['25722992'], 'category': '기술 스택'},
-    },
-    {
-        "id": 'qa-064',
-        "input": '상주 프로젝트와 비상주 프로젝트의 주요 차이점은 무엇인가요?',
-        "expected_output": '상주 프로젝트는 고객사에 일정 기간 상주하며 개발을 진행하고, 비상주 프로젝트는 외부에서 시스템을 구축하며 고객사 방문은 프로젝트 단계에 따라 정기적으로 진행됩니다.',
-        "metadata": {'expected_doc_ids': ['25755858'], 'category': '프로젝트'},
-    },
-    {
-        "id": 'qa-065',
-        "input": '영어 실력이 엔지니어에게 왜 중요한가?',
-        "expected_output": '영어 리딩 능력은 최신 기술 문서를 이해하고 기술적인 맥락을 파악하는 데 필수적이며, 고객 응대 시에도 중요성을 가집니다.',
-        "metadata": {'expected_doc_ids': ['25723008'], 'category': '엔지니어 역량'},
-    },
-    {
-        "id": 'qa-066',
-        "input": '중간 관리자의 역할은 무엇인가요?',
-        "expected_output": '중간 관리자는 팀원과 조직 사이의 업무를 조율하고 구성원의 성장과 성취를 이끌어내며, 조직 전체의 발전과 성과에 중요한 역할을 합니다.',
-        "metadata": {'expected_doc_ids': ['25821291'], 'category': '리더십'},
-    },
-    {
-        "id": 'qa-067',
-        "input": '고객 유입 경로 구축 문서에는 어떤 내용이 포함되어 있나요?',
-        "expected_output": '문서에서는 고객 유입 경로 구축과 관련된 내용들이 포함되어 있습니다.',
-        "metadata": {'expected_doc_ids': ['152698921'], 'category': '세일즈'},
-    },
+        "id": "qa-v2-001",
+        "input": "LLOYDK의 솔루션/개발 카테고리에 있는 '사내 Syetem 정보' 문서에서 BlackBird 서버의 IP 주소와 주요 사용처를 알려줘",
+        "expected_output": "BlackBird 서버의 IP 주소는 192.168.123.34이며, 주요 사용처는 PWC 프로젝트 on-prem 서비스 구현으로 조성훈과 노현우가 사용자입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "113213442"
+            ],
+            "category": "솔루션/개발",
+            "doc_title": "사내 Syetem 정보"
+        }
+    },
+    {
+        "id": "qa-v2-002",
+        "input": "LLOYDK 솔루션/개발 경로에 있는 '사내 Syetem 사용 정보' 문서에서 'lk-ocr-api'가 사용하는 포트 정보가 뭐야?",
+        "expected_output": "'lk-ocr-api'는 포트 번호 8888을 사용합니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "119013427"
+            ],
+            "category": "솔루션/개발",
+            "doc_title": "사내 Syetem 사용 정보"
+        }
+    },
+    {
+        "id": "qa-v2-003",
+        "input": "LLOYDK 솔루션/개발 문서에서 text-embedding-inference 서버의 모델 정보 조회 엔드포인트가 뭐야?",
+        "expected_output": "text-embedding-inference 서버의 모델 정보 조회 엔드포인트는 /info 입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "119111726"
+            ],
+            "category": "솔루션/개발",
+            "doc_title": "Inference Server 별 Endpoint 정리"
+        }
+    },
+    {
+        "id": "qa-v2-004",
+        "input": "LLOYDK 솔루션/개발의 'HashiCorp 자격증 취득현황' 문서에서 Assosiate 자격증이 몇 개 등록되어 있나요?",
+        "expected_output": "현재 'HashiCorp Certified: Vault Associate' Assosiate 자격증이 1개 등록되어 있습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "164200452"
+            ],
+            "category": "솔루션/개발",
+            "doc_title": "HashiCorp 자격증 취득현황"
+        }
+    },
+    {
+        "id": "qa-v2-005",
+        "input": "LLOYDK 솔루션/개발 경로의 '정보처리기사 자격증 취득현황' 문서에서 자격증 파일 업로드 방법은 어떻게 되나요?",
+        "expected_output": "자격증 파일명을 'OOO(이름)_자격증명.pdf' 형식으로 변경 저장한 후, 파일 업로드 할 위치로 커서를 이동하여 파일 업로드를 클릭하고, 업로드된 파일을 클릭한 후 인라인 옵션을 지정합니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "241697034"
+            ],
+            "category": "솔루션/개발",
+            "doc_title": "정보처리기사 자격증 취득현황"
+        }
+    },
+    {
+        "id": "qa-v2-006",
+        "input": "LLOYDK 솔루션/개발 경로의 '사내 MCP 서버 모음 (Managed MCP Servers)' 문서에 따르면 Jira MCP 서버로 어떤 작업들을 Claude에게 시킬 수 있나요?",
+        "expected_output": "Jira MCP 서버를 통해 Claude가 Jira 이슈를 찾아보고, 새로 만들고, 수정하고, 상태를 바꾸고, 댓글을 다는 작업을 수행할 수 있습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "319782940"
+            ],
+            "category": "솔루션/개발",
+            "doc_title": "사내 MCP 서버 모음 (Managed MCP Servers)"
+        }
+    },
+    {
+        "id": "qa-v2-007",
+        "input": "LLOYDK의 사업기획팀 Demo 구축 기획안에 따르면, 기업 소개 및 초기 미팅 단계에서 데모 활용의 효율성을 높이기 위한 목표는 무엇인가?",
+        "expected_output": "분산되어 운영 중인 데모 자산을 업무 영역 및 활용 목적 기준으로 재정의하고 구조화하여, 고객이 상황에 맞는 데모를 빠르고 일관되게 선택하고 설명할 수 있도록 함으로써 전달력과 효율성을 높이는 체계를 마련하는 것이 목표입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "117964974"
+            ],
+            "category": "기획",
+            "doc_title": "사업기획팀 Demo 구축 기획안"
+        }
+    },
+    {
+        "id": "qa-v2-008",
+        "input": "LLOYDK 사업기획팀 영업용 데모 문서에서 신규로 계획 중인 버티컬 영역의 기능은 무엇인가요?",
+        "expected_output": "신규로 계획 중인 버티컬 영역의 기능은 이상거래/행동 탐지와 민원 분류 서비스입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "118128642"
+            ],
+            "category": "기획",
+            "doc_title": "사업기획팀 영업용 데모"
+        }
+    },
+    {
+        "id": "qa-v2-009",
+        "input": "LLOYDK의 기획 카테고리에서 제안서/제언서 템플릿 관련 문서에 따르면, 제안서 템플릿의 주요 특징은 무엇인가요?",
+        "expected_output": "제안서 템플릿의 주요 특징은 장표별 작성 가이드를 통해 각 장표의 기획 의도와 필수 포함 요소들을 명확히 하였고, 공통 영역을 모듈화하여 재사용성을 높였습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "118325442"
+            ],
+            "category": "기획",
+            "doc_title": "제안서/제언서 템플릿 관련"
+        }
+    },
+    {
+        "id": "qa-v2-010",
+        "input": "LLOYDK의 '사업기획팀 데모 사이트 개발 환경 및 로컬 세팅 가이드'에 따르면, 로컬 환경에서 서버 코드를 정상적으로 실행하기 위해 반드시 해야 할 중요한 설정은 무엇인가요?",
+        "expected_output": "로컬 환경에서 서버 코드를 실행하려면 'frontend' 폴더 내부의 '.env' 파일을 삭제하거나 주석 처리해야 합니다. 이를 통해 프로젝트는 자동으로 로컬 모드를 인식하고 서버 IP 연결 오류를 방지합니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "135921727"
+            ],
+            "category": "기획",
+            "doc_title": "사업기획팀 데모 사이트 개발 환경 및 로컬 세팅 가이드"
+        }
+    },
+    {
+        "id": "qa-v2-011",
+        "input": "20260209 사업기획팀 데모 구축 관련 회의록에 따르면, 데모 관련 로드맵 수립에 있어서 어떤 아이디어가 논의되었어?",
+        "expected_output": "공통 모듈을 여러 도메인에 적용하는 방향으로 재정립하고, 프롬프트와 화면단만 도메인 맞춤형으로 진행하며 기능은 공통으로 사용하는 방향이 논의되었다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "145522689"
+            ],
+            "category": "기획",
+            "doc_title": "20260209 사업기획팀 데모 구축 관련 회의록"
+        }
+    },
+    {
+        "id": "qa-v2-012",
+        "input": "LLOYDK의 '사업기획팀 데모 로드맵' 문서에서 1단계 MVP 데모의 전략적 의도는 무엇인가?",
+        "expected_output": "시장 반응을 빠르게 검증할 수 있는 3개 유스케이스로 기술 실현 가능성과 고객 니즈를 동시에 확인하는 것이다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "145784858"
+            ],
+            "category": "기획",
+            "doc_title": "사업기획팀 데모 로드맵"
+        }
+    },
+    {
+        "id": "qa-v2-013",
+        "input": "LLOYDK의 Ebasenet 프로젝트 2차 기술 미팅 회의록(25.12.16)에서 결정된 첨부파일 관련 2차 개발 범위는 무엇인가?",
+        "expected_output": "첨부파일 포함 확장, 첨부 문서 텍스트화, 첨부파일 기반 검색/요약이 2차 개발 범위로 결정되었습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "103874565"
+            ],
+            "category": "Project",
+            "doc_title": "2차 기술 미팅 회의록(25.12.16)"
+        }
+    },
+    {
+        "id": "qa-v2-014",
+        "input": "LLOYDK 프로젝트의 25.12.23 내부 데이터 파악 회의에서 귀뚜라미가 프로모션 데이터 공유와 관련하여 어떤 사항을 검토하기로 했어?",
+        "expected_output": "귀뚜라미 측은 프로모션 데이터 공유 가능 여부 및 실태를 검토하기로 했습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "107741206"
+            ],
+            "category": "Project",
+            "doc_title": "25.12.23 내부 데이터 파악 회의"
+        }
+    },
+    {
+        "id": "qa-v2-015",
+        "input": "LLOYDK 프로젝트의 '어플라이언스 사용용도 구분' 문서에서 델 AI 워크스테이션 표준형의 주요 작업 용도는 무엇인가?",
+        "expected_output": "주요 작업 용도는 일반 챗봇 및 고객 응대용 대화형 시스템, 단일 파일 또는 짧은 코드 리뷰 및 리팩토링 보조, 짧은 마케팅 문서 작성, 단일 문서 요약 및 Q&A, 그리고 짧은 RAG 세션 기반의 정보 검색형 앱입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "108331521"
+            ],
+            "category": "Project",
+            "doc_title": "어플라이언스 사용용도 구분"
+        }
+    },
+    {
+        "id": "qa-v2-016",
+        "input": "LLOYDK / Project / 어플라이언스 / 25.12.26 결과 리뷰 문서에서 GB10 웨비나 준비에 대해 언급된 내용을 요약해 줄래?",
+        "expected_output": "GB10 웨비나 준비에서는 GB10을 잘 활용했다는 점을 강조하며, 어떤 업무에 사용했는지, 타사 제품보다 어떤 점이 우수한지, 그리고 근거를 상세하게 예시로 들어야 한다고 언급했습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "108396835"
+            ],
+            "category": "Project",
+            "doc_title": "25.12.26 결과 리뷰"
+        }
+    },
+    {
+        "id": "qa-v2-017",
+        "input": "LLOYDK의 2025.12.30 어플라이언스 추가 테스트 Todo-list 문서에는 어떤 LLM 모델 관련 테스트가 제안되어 있나요?",
+        "expected_output": "기능 정성 테스트에서는 분류, 요약, 번역 등의 LLM 모델 별 공신력 있는 테스트를 찾아보고, 적절한 참고 테스트가 없으면 테스트 데이터셋을 만들어 사용하도록 제안되어 있습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "108397422"
+            ],
+            "category": "Project",
+            "doc_title": "2025.12.30 어플라이언스 추가 테스트 Todo-list"
+        }
+    },
+    {
+        "id": "qa-v2-018",
+        "input": "20260223_주간미팅_피앤씨 문서에서 AI EXPO KOREA와 World IT Show에 대한 현재 준비 사항은 무엇인가?",
+        "expected_output": "AI EXPO KOREA와 World IT Show의 참가 신청이 완료되었으며, 참가비는 2월 25일에 납부될 예정입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "155811842"
+            ],
+            "category": "팀 회의록 (공개 운영 중)",
+            "doc_title": "20260223_주간미팅_피앤씨"
+        }
+    },
+    {
+        "id": "qa-v2-019",
+        "input": "LLOYDK 팀 회의록(예시)_활용 가능 문서에서 전사 팀 미팅 관련하여 결정된 사항은 무엇인가?",
+        "expected_output": "전사 팀 미팅에 대해 컨플 회의록 기록을 즉시 운영 적용하기로 결정되었습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "156008510"
+            ],
+            "category": "팀 회의록 (공개 운영 중)",
+            "doc_title": "회의록(예시)_활용 가능"
+        }
+    },
+    {
+        "id": "qa-v2-020",
+        "input": "20260309_주간미팅_세일즈 문서에서 SDS CS 챗봇 구축 프로젝트에 대한 인력 준비 계획은 어떻게 되어 있지?",
+        "expected_output": "SDS CS 챗봇 구축 프로젝트 진행 시 다수의 인력이 필요할 것으로 예상됨에 따라, 프로젝트 대응을 위해 아웃소싱 인력을 사전에 확보하고 준비하는 방안을 검토하기로 하였다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "163021044"
+            ],
+            "category": "팀 회의록 (공개 운영 중)",
+            "doc_title": "20260309_주간미팅_세일즈"
+        }
+    },
+    {
+        "id": "qa-v2-021",
+        "input": "LLOYDK 팀의 2026년 3월 3일 주간 미팅 회의록에서 가장 중요한 의사결정 사항이 뭐였어?",
+        "expected_output": "해당 회의록에는 주요 의사결정 사항이 명시되어 있지 않습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "163250188"
+            ],
+            "category": "팀 회의록 (공개 운영 중)",
+            "doc_title": "20260303_주간미팅_솔루션 test"
+        }
+    },
+    {
+        "id": "qa-v2-022",
+        "input": "LLOYDK 솔루션/개발 인천대전환TF 20260303_주간미팅에서 어떤 자료들이 관련 자료로 언급되었나요?",
+        "expected_output": "업무 공유 시트와 업무 공유 지라가 관련 자료로 언급되었습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "163479618"
+            ],
+            "category": "팀 회의록 (공개 운영 중)",
+            "doc_title": "20260303_주간미팅_인천대전환tf test"
+        }
+    },
+    {
+        "id": "qa-v2-023",
+        "input": "LLOYDK / LLOYDK에 오신 걸 환영합니다! / People / Onboarding (필수) / 신규입사자 온보딩 가이드의 D + 1 ~ D + 30, Soft Landing 단계에서 제공되는 핵심 포인트는 무엇인가요?",
+        "expected_output": "Soft Landing 단계의 핵심 포인트는 회사 문화 이해, 기본 업무 흐름 파악, AI 기초 OT 및 회사의 AI 방향성 공유, 초기 실무 점진적 도입입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "101220355"
+            ],
+            "category": "LLOYDK에 오신 걸 환영합니다!",
+            "doc_title": "신규입사자 온보딩 가이드"
+        }
+    },
+    {
+        "id": "qa-v2-024",
+        "input": "LLOYDK의 '종합건강검진 제도' 문서에 따르면 2026년부터 시행되는 연 1회 종합검진 제도는 어떻게 운영되나요?",
+        "expected_output": "2026년부터 모든 정규직 임직원에게 연 1회 종합검진과 유급 1일의 검진 연차가 제공되며, 검진 비용은 1인당 20만 원까지 지원됩니다. 신규 입사자는 6월 30일까지 입사 시 당해에 검진을 받을 수 있고, 7월 1일 이후 입사자는 다음 해부터 검진 대상이 됩니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "102793224"
+            ],
+            "category": "LLOYDK에 오신 걸 환영합니다!",
+            "doc_title": "종합건강검진 제도"
+        }
+    },
+    {
+        "id": "qa-v2-025",
+        "input": "LLOYDK Onboarding 필수 자료의 '반반차(2시간) 제도' 문서에서 오전 반반차를 사용할 때 출근 시간을 옵션에 따라 어떻게 설정해야 하나?",
+        "expected_output": "오전 반반차 사용 시 옵션 1은 11:00 출근 후 휴게 시간 포함 18:00 퇴근, 옵션 2는 휴게 없이 12:00 출근해 6시간 근무 후 퇴근입니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "102858780"
+            ],
+            "category": "LLOYDK에 오신 걸 환영합니다!",
+            "doc_title": "반반차(2시간) 제도"
+        }
+    },
+    {
+        "id": "qa-v2-026",
+        "input": "LLOYDK의 '3년 근속 주기 Refresh 휴가 제도'에 따르면 휴가 기간은 얼마나 주어지나요?",
+        "expected_output": "3년 근속을 달성한 임직원에게 유급 7일의 Refresh 휴가가 지급됩니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "105021485"
+            ],
+            "category": "LLOYDK에 오신 걸 환영합니다!",
+            "doc_title": "3년 근속 주기 Refresh 휴가 제도"
+        }
+    },
+    {
+        "id": "qa-v2-027",
+        "input": "LLOYDK의 'HBD! 생일 반차 제도' 문서에서 생일 반차를 사용할 수 있는 기간은 언제인가요?",
+        "expected_output": "생일 반차는 생일 포함 주부터 그 다음 주까지, 총 2주간 사용할 수 있습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "105152631"
+            ],
+            "category": "LLOYDK에 오신 걸 환영합니다!",
+            "doc_title": "HBD! 생일 반차 제도"
+        }
+    },
+    {
+        "id": "qa-v2-028",
+        "input": "LLOYDK 피앤씨 사내 행사에서 다룬 2025년 4분기 타운홀의 운영/개발 부문 프로젝트 회고 내용이 뭐야?",
+        "expected_output": "문서에는 운영/개발 부문 프로젝트 회고의 구체적인 내용이 포함되어 있지 않습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "108397222"
+            ],
+            "category": "피앤씨",
+            "doc_title": "2025년 4분기 타운홀"
+        }
+    },
+    {
+        "id": "qa-v2-029",
+        "input": "LLOYDK 피앤씨 사내 행사 2025년 3분기 타운홀 회의에서 CEO가 발표한 주요 내용은 뭐야?",
+        "expected_output": "이 정보는 본문에 명시되어 있지 않습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "108397260"
+            ],
+            "category": "피앤씨",
+            "doc_title": "2025년 3분기 타운홀"
+        }
+    },
+    {
+        "id": "qa-v2-030",
+        "input": "2026년 전사워크샵 공지에 따르면, 팀빌딩 프로그램을 위한 팀배정은 어떻게 이루어지나요?",
+        "expected_output": "팀빌딩 프로그램 팀배정은 다양한 부서와 팀의 멤버들이 서로 어우러져 함께 할 수 있도록 AI를 활용해 랜덤으로 배정되었습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "139165707"
+            ],
+            "category": "피앤씨",
+            "doc_title": "2026년 전사워크샵 공지"
+        }
+    },
+    {
+        "id": "qa-v2-031",
+        "input": "멘토링 제도(His.) / 기술 스택 문서에서 강조된 네트워크 기초 학습의 주요 내용은 무엇인가?",
+        "expected_output": "네트워크 기초 학습의 주요 내용으로는 DNS, 로드밸런싱, 방화벽, 포트, VPN 등의 기본 개념을 이해하고, ping, netstat, traceroute와 같은 패킷 흐름 트러블슈팅 도구 사용법을 익히는 것이 포함됩니다. 심화 학습 방법으로는 실제 서버에서 테스트 진행 및 네트워크 관련 서적 및 자격증 공부가 권장됩니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "25722992"
+            ],
+            "category": "기술 스택",
+            "doc_title": "기술 스택"
+        }
+    },
+    {
+        "id": "qa-v2-032",
+        "input": "멘토링 제도(His.) / 커뮤니케이션 가이드 문서에서 주니어가 계약이나 금액과 같은 불편한 문의를 받았을 때의 대응 방법이 뭐야?",
+        "expected_output": "정중하게 상급자를 통해 문의하도록 요청해야 한다. 예를 들어, '계약이나 금액 부분은 제가 확인하기 어려우니 회사 영업팀을 통해 문의 부탁드립니다.'라고 설명하는 방법이 있다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "25723017"
+            ],
+            "category": "커뮤니케이션 가이드",
+            "doc_title": "커뮤니케이션 가이드"
+        }
+    },
+    {
+        "id": "qa-v2-033",
+        "input": "LLOYDK 피드백 세션 문서 '2026 Q2 피드백 윤이지'에서 윤이지가 입사 후 8개월 동안 수행한 데모 구현 관련 주요 업적은 무엇인가요?",
+        "expected_output": "사내 문서 기반 RAG 질의응답 가능성을 검증하기 위해 데모 포탈 및 Confluence 연동 온보딩 챗봇을 PoC로 구현하였으며, OpenClaw 기반 견적 생성 에이전트를 구현하여 OpenClaw의 활용 가능성을 확인했습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "254148627"
+            ],
+            "category": "피드백 세션",
+            "doc_title": "2026 Q2 피드백 윤이지"
+        }
+    },
+    {
+        "id": "qa-v2-034",
+        "input": "LLOYDK 마케팅 팀의 연간행사 중 창립기념일은 언제야?",
+        "expected_output": "창립기념일은 9월 첫째주 월요일이다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "20808354"
+            ],
+            "category": "마케팅",
+            "doc_title": "연간행사(His.)"
+        }
+    },
+    {
+        "id": "qa-v2-035",
+        "input": "LLOYDK의 2026 외부 행사 중 '2026 월드IT쇼 DB 리스트' 문서에서 설문 리드를 위한 주요 데이터 필터링 기준은 무엇인가?",
+        "expected_output": "설문 리드의 경우 매출액 100억 이상 기업은 별도 표시되며, AI 도입 검토 가능성 항목을 기준으로 리드를 구체적으로 검토 중, 관심이 있어 검토 예정, 필요성은 있으나 아직 미정인 기관만 포함하고 현재 계획 없음 응답 기관은 제외합니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "236650576"
+            ],
+            "category": "마케팅",
+            "doc_title": "2026 월드IT쇼 DB 리스트"
+        }
+    },
+    {
+        "id": "qa-v2-036",
+        "input": "멘토링 제도(His.) / 리더십 경로의 '리더십' 문서에서 중간 관리자가 팀원과의 정기적인 1:1 커뮤니케이션을 통해 얻을 수 있는 이점이 무엇인지 알려줘.",
+        "expected_output": "중간 관리자는 팀원과의 정기적인 1:1 커뮤니케이션을 통해 프로젝트 상황을 정확하게 파악하고, 팀원의 현재 컨디션이나 어려움을 사전에 파악하고 예방하여 팀/회사에 대한 소속감을 상승시킬 수 있습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "25821291"
+            ],
+            "category": "리더십",
+            "doc_title": "리더십"
+        }
+    },
+    {
+        "id": "qa-v2-037",
+        "input": "LLOYDK 세일즈 팀의 '고객 유입 경로 구축' 문서의 주요 내용이 뭐야?",
+        "expected_output": "해당 문서는 고객 유입 경로 구축과 관련된 정보를 다루고 있으며, 상세 내용은 제공되지 않았습니다. 추가 정보는 제공된 링크를 통해 확인할 수 있습니다.",
+        "metadata": {
+            "type": "factoid",
+            "expected_doc_ids": [
+                "152698921"
+            ],
+            "category": "세일즈",
+            "doc_title": "고객 유입 경로 구축"
+        }
+    },
+    {
+        "id": "qa-v2-gap-01",
+        "input": "03.설계_구성 아키텍처 문서에 적힌 상세 아키텍처 표 내용 전부 알려줘.",
+        "expected_output": "해당 문서는 Confluence 데이터베이스 카드로 임베드되어 있어 본문 표 데이터를 직접 확인할 수 없으므로, 문서 내 링크를 직접 참고해 주세요.",
+        "metadata": {
+            "type": "known_gap",
+            "expected_doc_ids": [
+                "120979468"
+            ],
+            "category": "Project",
+            "known_gap": True
+        }
+    },
+    {
+        "id": "qa-v2-gap-02",
+        "input": "솔루션 개발팀 주간 업무 리스트 데이터베이스 행 목록 다 보여줘.",
+        "expected_output": "해당 내용은 Confluence 데이터베이스 임베드 링크로 구성되어 있어 상세 행 데이터는 확인할 수 없으니 링크를 확인해 주세요.",
+        "metadata": {
+            "type": "known_gap",
+            "expected_doc_ids": [
+                "120979468"
+            ],
+            "category": "Project",
+            "known_gap": True
+        }
+    },
+    {
+        "id": "qa-v2-ood-01",
+        "input": "사내 피트니스 센터 이용 시간과 개인 락커 신청 방법 알려줘.",
+        "expected_output": "사내 Confluence 문서에 피트니스 센터나 락커 신청에 관한 내용이 없어 확인할 수 없습니다.",
+        "metadata": {
+            "type": "out_of_domain",
+            "expected_doc_ids": [],
+            "category": "out-of-domain"
+        }
+    },
+    {
+        "id": "qa-v2-ood-02",
+        "input": "구내식당 오늘 점심 메뉴와 식권 구매처가 어디야?",
+        "expected_output": "사내 Confluence 문서에 구내식당 메뉴나 식권 관련 내용이 등록되어 있지 않습니다.",
+        "metadata": {
+            "type": "out_of_domain",
+            "expected_doc_ids": [],
+            "category": "out-of-domain"
+        }
+    },
+    {
+        "id": "qa-v2-ood-03",
+        "input": "사내 동호회 신설 기준과 매월 지원금 신청 절차를 알려줘.",
+        "expected_output": "사내 Confluence 문서에 동호회 지원금이나 신설 기준 관련 내용이 없습니다.",
+        "metadata": {
+            "type": "out_of_domain",
+            "expected_doc_ids": [],
+            "category": "out-of-domain"
+        }
+    },
+    {
+        "id": "qa-v2-ood-04",
+        "input": "사옥 지하 주차장 1일 방문 차량 무료 주차권은 어디서 받아?",
+        "expected_output": "사내 Confluence 문서에 주차권 발급 관련 안내가 등록되어 있지 않습니다.",
+        "metadata": {
+            "type": "out_of_domain",
+            "expected_doc_ids": [],
+            "category": "out-of-domain"
+        }
+    },
+    {
+        "id": "qa-v2-ood-05",
+        "input": "직장 어린이집 입소 신청 기간과 제출 서류 안내해줘.",
+        "expected_output": "사내 Confluence 문서에 직장 어린이집 관련 정보가 없습니다.",
+        "metadata": {
+            "type": "out_of_domain",
+            "expected_doc_ids": [],
+            "category": "out-of-domain"
+        }
+    },
+    {
+        "id": "qa-v2-ood-06",
+        "input": "해외 출장 시 개인 항공사 마일리지 적립 및 사후 정산 규정이 어떻게 돼?",
+        "expected_output": "사내 Confluence 문서에 해외 출장 마일리지 정산 관련 규정이 없습니다.",
+        "metadata": {
+            "type": "out_of_domain",
+            "expected_doc_ids": [],
+            "category": "out-of-domain"
+        }
+    }
 ]

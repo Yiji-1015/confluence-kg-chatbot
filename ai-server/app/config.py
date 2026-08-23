@@ -30,24 +30,24 @@ class Settings(BaseSettings):
         return bool(v)
 
     # 2. LiteLLM 게이트웨이 설정 (LLM 및 임베딩 단일 관문)
-    LITELLM_BASE_URL: str = "http://localhost:4000"
+    LITELLM_BASE_URL: str = "http://127.0.0.1:4000"
     DEFAULT_LLM_MODEL: str = "deepseek-chat"
     DEFAULT_EMBEDDING_MODEL: str = "embedding-openai"  # OpenAI text-embedding-3-small, 1536차원 (ELASTICSEARCH.md 기준)
 
     # 3. Elasticsearch 하이브리드 검색엔진 설정 (ELASTICSEARCH.md 기준: TLS + 인증 필수)
-    ELASTICSEARCH_URL: str = "https://localhost:9200"
+    ELASTICSEARCH_URL: str = "https://127.0.0.1:9200"
     ELASTICSEARCH_INDEX: str = "confluence-openai-v1"
     ELASTICSEARCH_USER: str = "elastic"
     ELASTICSEARCH_PASSWORD: Optional[str] = None
     ELASTICSEARCH_CA_CERT: str = str(REPO_ROOT / "elasticsearch" / "certs" / "ca" / "ca.crt")
 
     # 4. Neo4j Knowledge Graph 지식 그래프 DB 설정
-    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_URI: str = "bolt://127.0.0.1:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "kg-password"
 
     # 5. Redis 캐시 및 대화 세션 저장소 설정
-    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_URL: str = "redis://127.0.0.1:6379"
 
     # 6. Confluence API 연동 설정
     CONFLUENCE_BASE_URL: str = "https://lloydk.atlassian.net/wiki"

@@ -14,10 +14,15 @@ if settings.LANGFUSE_SECRET_KEY:
 if settings.LANGFUSE_HOST:
     os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_HOST
 
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from langfuse import get_client
 from evaluation.dataset_items import QA_DATASET_ITEMS
 
-DATASET_NAME = "confluence-rag-qa-v1"
+DATASET_NAME = "confluence-rag-qa-v2"
 
 
 def main():
