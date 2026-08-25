@@ -5,17 +5,15 @@ from app.retrieval.es_client import search_hybrid_async
 from app.llm.litellm_client import embed_texts_async, generate_answer_async
 from app.llm.model_router import select_optimal_model
 
-# Langfuse Observability 트레이싱 데코레이터 (SDK v3, OTel 기반)
+# Langfuse Observability 트레이싱 데코레이터 (OTel 기반)
 try:
-    from langfuse import observe, get_client
+    from langfuse.decorators import observe, langfuse_context
 except ImportError:
-    # langfuse 미설치 시 no-op 데코레이터
     def observe(*args, **kwargs):
         def decorator(f):
             return f
         return decorator
-    def get_client():
-        return None
+    langfuse_context = None
 
 # /internal/chat 경로를 처리하는 FastAPI 라우터 정의
 router = APIRouter(prefix="/internal/chat", tags=["Internal Chat AI Engine"])
@@ -38,19 +36,21 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
             override_model=request.model
         )
 
-        langfuse_client = get_client()
-        if langfuse_client:
-            langfuse_client.update_current_trace(
-                session_id=request.sessionId,
-                input=request.query,
-                tags=["confluence-rag", "hybrid-search", selected_model],
-                metadata={
-                    "selected_model": selected_model,
-                    "routing_reason": routing_reason,
-                    "query_length": len(rewritten_query),
-                    "history_turns": len(request.history or [])
-                }
-            )
+        if langfuse_context:
+            try:
+                langfuse_context.update_current_trace(
+                    session_id=request.sessionId,
+                    input=request.query,
+                    tags=["confluence-rag", "hybrid-search", selected_model],
+                    metadata={
+                        "selected_model": selected_model,
+                        "routing_reason": routing_reason,
+                        "query_length": len(rewritten_query),
+                        "history_turns": len(request.history or [])
+                    }
+                )
+            except Exception:
+                pass
 
         # 3. 질문 임베딩 비동기 생성 (OpenAI text-embedding-3-small via LiteLLM)
         query_vectors = await embed_texts_async([rewritten_query])
@@ -100,9 +100,9 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
         graph_context = None
 
         # Langfuse 트레이스 즉시 전송 (비동기 버퍼 flush)
-        if langfuse_client:
+        if langfuse_context:
             try:
-                langfuse_client.flush()
+                langfuse_context.flush()
             except Exception:
                 pass
 

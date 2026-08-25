@@ -1,0 +1,31 @@
+# =================================================================
+# [Observability & Gateway Layer] LLM 라우팅 게이트웨이 (LiteLLM)
+# =================================================================
+# 역할:
+# - LiteLLM Proxy: OpenAI 규격 단일 엔드포인트 제공, DeepSeek / GPT-4o 동적 분기 및 Fallback 장애 대응
+# - Langfuse 연동: LiteLLM 내장 콜백 및 Python SDK를 통해 cloud.langfuse.com으로 latency/token/cost 트레이스 전송
+#
+# 실행 방법:
+#   docker compose -f docker-compose.yml -f docker-compose.obs.yml up -d
+#
+# 포트:
+#   - 4000: LiteLLM API 엔드포인트
+# =================================================================
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: kg-litellm
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm:/app/config
+    command: ["--config", "/app/config/config.yaml", "--port", "4000"]
+    env_file:
+      - .env
+    mem_limit: 1g
+    restart: on-failure:3
+
+networks:
+  default:
+    name: confluence-net

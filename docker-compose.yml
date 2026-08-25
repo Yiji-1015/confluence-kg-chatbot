@@ -1,141 +1,32 @@
+# =================================================================
+# [Core Layer] 데이터베이스 & 세션 캐시 레이어 (기본 필수 실행)
+# =================================================================
+# 역할:
+# - PostgreSQL: 대화방 세션 및 메시지 이력 영구 저장 (RDB)
+# - Redis: 최근 5턴 대화 맥락 캐싱 (TTL 30분) 및 세션 캐시
+#
+# 실행 방법:
+#   docker compose up -d
+# =================================================================
+
 services:
-  neo4j:
-    image: neo4j:5-community
-    container_name: kg-neo4j
+  postgres:
+    image: postgres:16-alpine
+    container_name: kg-postgres
     ports:
-      - "7474:7474"   # Neo4j Browser
-      - "7687:7687"   # Bolt protocol
+      - "5432:5432"
     environment:
-      - NEO4J_AUTH=neo4j/kg-password
-      - NEO4J_server_memory_heap_initial__size=512m
-      - NEO4J_server_memory_heap_max__size=1G
-      - NEO4J_server_memory_pagecache_size=512m
-    mem_limit: 2g
+      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     volumes:
-      - neo4j_data:/data
-    restart: on-failure:3
-
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    container_name: kg-litellm
-    ports:
-      - "4000:4000"   # LLM/임베딩 게이트웨이
-    volumes:
-      - ./litellm:/app/config
-    command: ["--config", "/app/config/config.yaml", "--port", "4000"]
-    env_file:
-      - .env
-    mem_limit: 768m
-    restart: on-failure:3
-
-  # [1/4] TLS 인증서 발급 — "통신 내용을 암호화하는 자물쇠 파일"을 만드는 단계.
-  # 비밀번호(누가 로그인할 수 있는가)와는 전혀 관계없다. elasticsearch/certs가 이미 있으면 재실행하지 않는다.
-  # ELASTICSEARCH.md 기준: TLS 인증서를 부트스트랩 시점에 한 번만 생성한다.
-  es-setup:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-    container_name: kg-es-setup
-    user: "0"
-    volumes:
-      - ./elasticsearch/certs:/usr/share/elasticsearch/config/certs
-    command: >
-      bash -c '
-        if [ ! -f config/certs/ca/ca.crt ]; then
-          bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
-          unzip -o config/certs/ca.zip -d config/certs;
-        fi;
-        if [ ! -f config/certs/elasticsearch/elasticsearch.crt ]; then
-          bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip \
-            --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key \
-            --name elasticsearch --dns elasticsearch --dns localhost --ip 127.0.0.1;
-          unzip -o config/certs/certs.zip -d config/certs;
-        fi;
-        chmod -R a+r config/certs;
-      '
-
-  # [2/4] Elasticsearch 본체 기동.
-  # 이 컨테이너가 "처음" 뜰 때(=es_data 볼륨이 비어있을 때), 자기 자신의 내장 관리자 계정인
-  # elastic 의 비밀번호를 아래 ELASTIC_PASSWORD 값으로 스스로 초기화한다.
-  # (어디 외부 서버에 "가입"하는 게 아니라, 컨테이너가 자기 로컬 데이터에 비번을 저장하는 것뿐)
-  # 이 값은 .env 에 미리 정해둔 고정값이고, cert 파일과는 무관하게 별도로 주입된다.
-  elasticsearch:
-    build: ./elasticsearch   # nori 한국어 분석 플러그인 포함
-    container_name: kg-elasticsearch
-    depends_on:
-      es-setup:
-        condition: service_completed_successfully
-    environment:
-      - node.name=kg-es-01
-      - cluster.name=confluence-kg
-      - discovery.type=single-node
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}   # elastic 계정(관리자) 비밀번호 — .env 값 그대로 사용
-      - xpack.security.enabled=true
-      - xpack.security.http.ssl.enabled=true
-      - xpack.security.http.ssl.key=certs/elasticsearch/elasticsearch.key
-      - xpack.security.http.ssl.certificate=certs/elasticsearch/elasticsearch.crt
-      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
-      - xpack.security.transport.ssl.enabled=true
-      - xpack.security.transport.ssl.verification_mode=certificate
-      - xpack.security.transport.ssl.key=certs/elasticsearch/elasticsearch.key
-      - xpack.security.transport.ssl.certificate=certs/elasticsearch/elasticsearch.crt
-      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
-    mem_limit: 2g
-    cpus: 1.0
-    ports:
-      - "127.0.0.1:9200:9200"   # 공인 인터페이스에 직접 노출하지 않음 (ELASTICSEARCH.md)
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-      - ./elasticsearch/certs:/usr/share/elasticsearch/config/certs
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: >
-        curl -s --cacert config/certs/ca/ca.crt
-        -u elastic:${ELASTIC_PASSWORD}
-        "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"
-        | grep -q '"status":"yellow"\|"status":"green"'
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-chatbot_db}"]
+      interval: 5s
       timeout: 5s
-      retries: 12
-      start_period: 60s
-    restart: on-failure:3
-
-  # [3/4] kibana_system 계정 비밀번호 설정.
-  # cert 발급([1/4])과는 완전히 별개의 단계다 — 여기서는 인증서 파일을 다루지 않고,
-  # 이미 떠 있는 Elasticsearch에 elastic 관리자 계정으로 로그인해서
-  # "kibana_system 계정 비밀번호를 KIBANA_PASSWORD 값으로 설정해줘"라고 API(curl) 한 번 호출할 뿐이다.
-  # KIBANA_PASSWORD 자체도 cert처럼 자동 생성되는 게 아니라 .env 에 미리 정해둔 고정값이다.
-  # Kibana는 elastic superuser로 시스템 인덱스에 쓸 수 없어서(부팅 시 거부됨) 이 별도 계정이 필요하다.
-  kibana-setup:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-    container_name: kg-kibana-setup
-    volumes:
-      - ./elasticsearch/certs:/certs:ro
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    command: >
-      curl -s -X POST --cacert /certs/ca/ca.crt
-      -u elastic:${ELASTIC_PASSWORD}
-      -H "Content-Type: application/json"
-      https://elasticsearch:9200/_security/user/kibana_system/_password
-      -d "{\"password\":\"${KIBANA_PASSWORD}\"}"
-
-  # [4/4] Kibana 본체 기동 — [3/4]에서 설정한 kibana_system 계정으로 로그인한다.
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.15.0
-    container_name: kg-kibana
-    environment:
-      - ELASTICSEARCH_HOSTS=https://elasticsearch:9200
-      - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}   # [3/4]에서 API로 설정한 것과 같은 값
-      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=/usr/share/kibana/config/certs/ca/ca.crt
-    ports:
-      - "5601:5601"   # Kibana 대시보드 (로컬: localhost:5601, LAN/서버: <IP>:5601 접속 가능)
-    volumes:
-      - ./elasticsearch/certs:/usr/share/kibana/config/certs:ro
-    depends_on:
-      kibana-setup:
-        condition: service_completed_successfully
+      retries: 5
     mem_limit: 1g
-    cpus: 0.75
     restart: on-failure:3
 
   redis:
@@ -144,56 +35,17 @@ services:
     command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     mem_limit: 768m
     restart: on-failure:3
 
-  postgres:
-    image: postgres:16-alpine
-    container_name: kg-postgres
-    ports:
-      - "5432:5432"   # RDB 포트 (Spring Data JPA 대화 기록 및 대화방 영구 저장용)
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    mem_limit: 1g
-    restart: on-failure:3
-
-  # Spring Boot 백엔드(챗봇 UI 포함). 호스트에서 맨몸으로 띄우면 firewalld가 8080을
-  # INPUT 체인에서 막아 LAN의 다른 사람이 접속할 수 없다. Docker로 띄우면 Docker가
-  # 컨테이너 포트를 publish할 때 자체 iptables 규칙(FORWARD 체인)을 추가해서
-  # firewalld의 zone 포트 목록을 우회하므로, 방화벽 설정을 건드리지 않고도
-  # 다른 컨테이너(Elasticsearch/Kibana/LiteLLM)처럼 LAN에서 바로 접속 가능해진다.
-  backend:
-    build: ./backend
-    container_name: kg-backend
-    ports:
-      - "8080:8080"
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      # ai-server는 아직 도커화 안 하고 호스트에서 직접 띄우는 중이라, 컨테이너 안에서
-      # 호스트로 나가는 특수 주소(host.docker.internal)로 접근한다 (아래 extra_hosts 참고).
-      - AI_ENGINE_URL=http://host.docker.internal:8000
-      - JAVA_TOOL_OPTIONS=-Xms256m -Xmx512m
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    mem_limit: 1g
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: on-failure:3
-
 volumes:
-  neo4j_data:
-  es_data:
   pg_data:
+
+networks:
+  default:
+    name: confluence-net
