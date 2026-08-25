@@ -23,7 +23,8 @@ services:
       - DEBUG=true
       - LITELLM_BASE_URL=${LITELLM_BASE_URL:-http://litellm:4000}
       - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-https://elasticsearch:9200}
-      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-${ELASTIC_PASSWORD}}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-${ELASTIC_PASSWORD:-kg-password}}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-kg-password}
       - NEO4J_URI=${NEO4J_URI:-bolt://neo4j:7687}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
@@ -35,6 +36,8 @@ services:
       - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
     volumes:
       - ./ai-server/app:/app/app:ro
+      - ./ai-server/scripts:/app/scripts:ro
+      - ./ai-server/evaluation:/app/evaluation:ro
       - ./elasticsearch/certs:/app/elasticsearch/certs:ro
       - ./.env:/app/.env:ro
     depends_on:

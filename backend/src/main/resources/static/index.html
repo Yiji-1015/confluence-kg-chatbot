@@ -7,13 +7,98 @@
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Marked.js (Markdown Parser) & DOMPurify (XSS 방지) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+
     <style>
         /* 스크롤바 커스텀 */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        pre { white-space: pre-wrap; word-break: break-word; }
+        
+        /* 마크다운 본문 스타일링 */
+        .markdown-body {
+            font-size: 0.925rem;
+            line-height: 1.65;
+            color: #1e293b;
+        }
+        .markdown-body p { margin-bottom: 0.65rem; }
+        .markdown-body p:last-child { margin-bottom: 0; }
+        .markdown-body strong { font-weight: 700; color: #0f172a; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+            font-weight: 700;
+            color: #0f172a;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .markdown-body h1 { font-size: 1.25rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem; }
+        .markdown-body h2 { font-size: 1.125rem; }
+        .markdown-body h3 { font-size: 1.0rem; }
+        .markdown-body ul { list-style-type: disc; padding-left: 1.25rem; margin-bottom: 0.65rem; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.25rem; margin-bottom: 0.65rem; }
+        .markdown-body li { margin-bottom: 0.25rem; }
+        .markdown-body code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            background-color: #f1f5f9;
+            color: #e11d48;
+            padding: 0.15rem 0.35rem;
+            border-radius: 0.25rem;
+            font-size: 0.85em;
+            border: 1px solid #e2e8f0;
+        }
+        .markdown-body pre {
+            background-color: #0f172a;
+            color: #f8fafc;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin-bottom: 0.75rem;
+        }
+        .markdown-body pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+            border: none;
+            font-size: 0.85rem;
+        }
+        .markdown-body blockquote {
+            border-left: 3px solid #3b82f6;
+            padding-left: 0.75rem;
+            color: #64748b;
+            font-style: italic;
+            margin-bottom: 0.65rem;
+        }
+        .markdown-body table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 0.75rem;
+            font-size: 0.85rem;
+        }
+        .markdown-body th, .markdown-body td {
+            border: 1px solid #cbd5e1;
+            padding: 0.4rem 0.6rem;
+            text-align: left;
+        }
+        .markdown-body th {
+            background-color: #f8fafc;
+            font-weight: 600;
+            color: #334155;
+        }
+        .markdown-body tr:nth-child(even) { background-color: #f8fafc; }
+
+        /* 타이핑 커서 애니메이션 */
+        .typing-cursor::after {
+            content: '▌';
+            color: #3b82f6;
+            animation: blink 0.8s infinite;
+            margin-left: 2px;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex overflow-hidden font-sans">
@@ -41,12 +126,9 @@
         </div>
 
         <!-- 사이드바 하단 정보 -->
-        <div class="p-3 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between">
-            <span class="flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                <span>Redis + JPA 연동됨</span>
-            </span>
-            <span class="text-slate-500">v1.0</span>
+        <div class="p-3.5 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+            <span class="text-slate-400 text-xs">Confluence AI Assistant</span>
+            <span class="text-slate-500 text-[11px]">v1.0</span>
         </div>
     </aside>
 
@@ -55,7 +137,7 @@
         <!-- 상단 대화방 헤더 -->
         <header class="h-16 border-b border-slate-200 px-6 flex items-center justify-between bg-white/80 backdrop-blur z-10">
             <div class="flex items-center gap-3">
-                <div class="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                <div class="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold shadow-sm">
                     <i class="fa-solid fa-robot"></i>
                 </div>
                 <div>
@@ -63,9 +145,9 @@
                     <p id="currentSessionIdBadge" class="text-xs text-slate-400 font-mono">Session ID: 없음</p>
                 </div>
             </div>
-            <div class="flex items-center gap-2 text-xs bg-slate-100 text-slate-600 py-1.5 px-3 rounded-full border border-slate-200">
-                <i class="fa-solid fa-database text-blue-500"></i>
-                <span>ES 하이브리드 검색 활성화</span>
+            <div class="flex items-center gap-2 text-xs bg-slate-100 text-slate-600 py-1.5 px-3 rounded-full border border-slate-200 shadow-sm">
+                <i class="fa-solid fa-book-bookmark text-blue-500"></i>
+                <span>사내 지식 검색 연결됨</span>
             </div>
         </header>
 
@@ -76,13 +158,14 @@
                 <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0 text-sm shadow">
                     <i class="fa-solid fa-robot"></i>
                 </div>
-                <div class="flex-1 bg-slate-100 border border-slate-200 rounded-2xl rounded-tl-none p-4 text-slate-800 leading-relaxed shadow-sm">
-                    <p class="font-semibold mb-1 text-slate-900">안녕하세요! Confluence 사내 지식 AI 어시스턴트입니다. 👋</p>
-                    <p class="text-sm text-slate-600">사내 규정, 회사 연혁, 복리후생, 개발 가이드 등 Confluence에 등록된 562개 문서에서 정보를 찾아 정확히 답변해 드립니다.</p>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                        <button onclick="quickAsk('연차 및 반차 신청 규정 알려줘')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition">💡 연차 및 반차 규정</button>
-                        <button onclick="quickAsk('회사 연혁에 대해 알려줘')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition">💡 회사 연혁</button>
-                        <button onclick="quickAsk('스마트워크 프로젝트 관련 문서 찾아줘')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition">💡 프로젝트 문서 검색</button>
+                <div class="flex-1 bg-slate-100 border border-slate-200 rounded-2xl rounded-tl-none p-5 text-slate-800 leading-relaxed shadow-sm">
+                    <p class="font-semibold mb-1 text-slate-900 text-base">안녕하세요! Confluence 사내 지식 AI 어시스턴트입니다. 👋</p>
+                    <p class="text-sm text-slate-600 mb-3">사내 규정, 시스템 정보, 복리후생, 개발 가이드 등 사내 Confluence 문서에서 정확한 정보를 찾아 출처와 함께 안내해 드립니다.</p>
+                    <div class="flex flex-wrap gap-2 pt-2 border-t border-slate-200">
+                        <button onclick="quickAsk('BlackBird 서버의 IP 주소와 주요 사용처를 알려줘')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition shadow-sm">💡 BlackBird 서버 IP</button>
+                        <button onclick="quickAsk('lk-ocr-api가 사용하는 포트 정보가 뭐야?')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition shadow-sm">💡 OCR API 포트 번호</button>
+                        <button onclick="quickAsk('연차 및 반차 신청 규정 알려줘')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition shadow-sm">💡 연차 규정</button>
+                        <button onclick="quickAsk('회사 연혁에 대해 알려줘')" class="text-xs bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 py-1.5 px-3 rounded-full transition shadow-sm">💡 회사 연혁</button>
                     </div>
                 </div>
             </div>
@@ -91,15 +174,15 @@
         <!-- 하단 질문 입력 폼 -->
         <div class="p-4 bg-white border-t border-slate-200">
             <form id="chatForm" class="max-w-4xl mx-auto relative flex items-center">
-                <input type="text" id="userInput" placeholder="Confluence 사내 문서에 대해 질문해 보세요... (Enter 키로 전송)" 
+                <input type="text" id="userInput" placeholder="사내 문서에 대해 편하게 질문해 보세요... (Enter 키로 전송)" 
                        class="w-full pl-5 pr-28 py-3.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-sm shadow-inner transition" autocomplete="off" required>
-                <button type="submit" id="btnSend" class="absolute right-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg flex items-center gap-1.5 transition duration-150 shadow">
+                <button type="submit" id="btnSend" class="absolute right-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium rounded-lg flex items-center gap-1.5 transition duration-150 shadow">
                     <span>전송</span>
                     <i class="fa-solid fa-paper-plane text-xs"></i>
                 </button>
             </form>
             <div class="text-center text-[11px] text-slate-400 mt-2">
-                답변은 사내 Confluence 색인 데이터를 기반으로 생성되며, Redis 멀티턴 세션과 JPA 영구 저장이 적용되어 있습니다.
+                답변은 사내 Confluence 문서를 바탕으로 생성됩니다.
             </div>
         </div>
     </main>
@@ -107,7 +190,14 @@
     <script>
         // 전역 상태 변수
         let currentSessionId = null;
+        let isGenerating = false;
         const API_BASE = '/api';
+
+        // Marked 옵션 설정 (개행 문자 보존)
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
 
         // 사용자 식별자 관리 (브라우저 LocalStorage 기반 익명 ID)
         function getUserId() {
@@ -126,6 +216,7 @@
         const chatMessagesEl = document.getElementById('chatMessages');
         const chatFormEl = document.getElementById('chatForm');
         const userInputEl = document.getElementById('userInput');
+        const btnSendEl = document.getElementById('btnSend');
         const btnNewChatEl = document.getElementById('btnNewChat');
         const currentChatTitleEl = document.getElementById('currentChatTitle');
         const currentSessionIdBadgeEl = document.getElementById('currentSessionIdBadge');
@@ -138,6 +229,7 @@
 
         // 1. 새 대화 시작 버튼 클릭
         btnNewChatEl.addEventListener('click', () => {
+            if (isGenerating) return;
             currentSessionId = null;
             currentChatTitleEl.textContent = '새로운 대화';
             currentSessionIdBadgeEl.textContent = 'Session ID: 없음';
@@ -158,12 +250,17 @@
         // 2. 폼 전송 이벤트 (질문 전송)
         chatFormEl.addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (isGenerating) return;
+
             const query = userInputEl.value.trim();
             if (!query) return;
 
             // 사용자 말풍선 추가
             appendUserMessage(query);
             userInputEl.value = '';
+            isGenerating = true;
+            btnSendEl.disabled = true;
+            btnSendEl.classList.add('opacity-50', 'cursor-not-allowed');
 
             // 로딩 스피너 추가
             const loadingId = appendLoadingMessage();
@@ -191,8 +288,8 @@
                 currentSessionId = data.sessionId;
                 currentSessionIdBadgeEl.textContent = `Session ID: ${currentSessionId}`;
 
-                // 봇 답변 출력
-                appendBotMessage(data.answer, data.sources);
+                // 스트리밍 타이핑 애니메이션으로 봇 답변 출력
+                await appendBotMessageWithStreaming(data.answer, data.sources);
 
                 // 새 세션이었다면 사이드바 목록 새로고침
                 if (isNewSession) {
@@ -204,6 +301,11 @@
             } catch (err) {
                 removeLoadingMessage(loadingId);
                 appendErrorMessage(`질문 처리 중 오류가 발생했습니다: ${err.message}`);
+            } finally {
+                isGenerating = false;
+                btnSendEl.disabled = false;
+                btnSendEl.classList.remove('opacity-50', 'cursor-not-allowed');
+                userInputEl.focus();
             }
         });
 
@@ -247,6 +349,7 @@
 
         // 4. 대화방 선택 시 과거 대화 불러오기 (GET /api/sessions/{id}/messages)
         async function selectSession(sessionId, title) {
+            if (isGenerating) return;
             currentSessionId = sessionId;
             currentChatTitleEl.textContent = title;
             currentSessionIdBadgeEl.textContent = `Session ID: ${sessionId}`;
@@ -268,7 +371,7 @@
                     if (msg.role === 'USER') {
                         appendUserMessage(msg.content);
                     } else {
-                        appendBotMessage(msg.content, msg.sources);
+                        appendBotMessageInstant(msg.content, msg.sources);
                     }
                 });
 
@@ -291,13 +394,13 @@
             }
         }
 
-        // 헬퍼: 말풍선 렌더링
+        // 6. 사용자 말풍선 렌더링
         function appendUserMessage(text) {
             const div = document.createElement('div');
             div.className = 'flex gap-4 max-w-3xl ml-auto justify-end items-start';
             div.innerHTML = `
                 <div class="bg-blue-600 text-white rounded-2xl rounded-tr-none px-4 py-3 leading-relaxed shadow text-sm max-w-xl">
-                    <p>${escapeHtml(text)}</p>
+                    <p class="whitespace-pre-wrap">${escapeHtml(text)}</p>
                 </div>
                 <div class="w-8 h-8 rounded-full bg-slate-700 text-white flex items-center justify-center flex-shrink-0 text-sm font-bold shadow">
                     <i class="fa-solid fa-user"></i>
@@ -307,48 +410,112 @@
             scrollToBottom();
         }
 
-        function appendBotMessage(text, sources) {
+        // 7. 스트리밍 타이핑 애니메이션 봇 말풍선
+        async function appendBotMessageWithStreaming(fullText, sources) {
             const div = document.createElement('div');
             div.className = 'flex gap-4 max-w-3xl mx-auto items-start';
 
-            let sourcesHtml = '';
+            const botId = 'bot-' + Date.now();
+            div.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0 text-sm shadow">
+                    <i class="fa-solid fa-robot"></i>
+                </div>
+                <div class="flex-1 bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-none p-4 text-slate-800 leading-relaxed shadow-sm text-sm relative group">
+                    <div id="${botId}" class="markdown-body typing-cursor"></div>
+                    <div id="${botId}-sources" class="hidden"></div>
+                    <button onclick="copyToClipboard('${botId}-raw')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition bg-white hover:bg-slate-100 border border-slate-200 text-slate-500 hover:text-slate-700 px-2 py-1 rounded text-xs flex items-center gap-1 shadow-sm" title="답변 복사">
+                        <i class="fa-regular fa-copy"></i>
+                        <span>복사</span>
+                    </button>
+                    <textarea id="${botId}-raw" class="hidden">${escapeHtml(fullText)}</textarea>
+                </div>
+            `;
+            chatMessagesEl.appendChild(div);
+
+            const contentEl = document.getElementById(botId);
+            const sourcesEl = document.getElementById(`${botId}-sources`);
+
+            // 글자 단위 타이핑 스트리밍 효과
+            const chunkSize = 3; // 한 번에 3글자씩 부드럽게 출력
+            let currentIdx = 0;
+
+            await new Promise((resolve) => {
+                const interval = setInterval(() => {
+                    currentIdx += chunkSize;
+                    const sliced = fullText.substring(0, currentIdx);
+                    contentEl.innerHTML = DOMPurify.sanitize(marked.parse(sliced));
+                    scrollToBottom();
+
+                    if (currentIdx >= fullText.length) {
+                        clearInterval(interval);
+                        contentEl.innerHTML = DOMPurify.sanitize(marked.parse(fullText));
+                        contentEl.classList.remove('typing-cursor');
+                        resolve();
+                    }
+                }, 18); // 18ms 간격 (약 1.5초 동안 유려하게 타이핑)
+            });
+
+            // 출처 카드 표시
             if (sources && sources.length > 0) {
-                sourcesHtml = `
-                    <div class="mt-3 pt-3 border-t border-slate-200 text-xs">
-                        <div class="font-semibold text-slate-700 mb-1.5 flex items-center gap-1">
-                            <i class="fa-solid fa-bookmark text-blue-500"></i> 참고한 Confluence 문서 (${sources.length}건):
-                        </div>
-                        <div class="space-y-1">
-                            ${sources.map(s => `
-                                <div class="bg-white border border-slate-200 rounded p-2 flex items-start justify-between gap-2 hover:border-blue-300 transition">
-                                    <div class="flex-1">
-                                        <a href="${s.url || '#'}" target="_blank" class="font-medium text-blue-600 hover:underline flex items-center gap-1">
-                                            <span>${escapeHtml(s.title)}</span>
-                                            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
-                                        </a>
-                                        <div class="text-[11px] text-slate-400 mt-0.5">${s.path ? escapeHtml(s.path) : (s.category || '일반')}</div>
-                                    </div>
-                                    ${s.score ? `<span class="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-mono">점수: ${s.score.toFixed(1)}</span>` : ''}
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
+                sourcesEl.innerHTML = buildSourcesHtml(sources);
+                sourcesEl.classList.remove('hidden');
+                scrollToBottom();
             }
+        }
+
+        // 8. 과거 대화 로드용 즉시 봇 말풍선 (타이핑 없이 바로 렌더링)
+        function appendBotMessageInstant(text, sources) {
+            const div = document.createElement('div');
+            div.className = 'flex gap-4 max-w-3xl mx-auto items-start';
+
+            const botId = 'bot-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
+            const renderedHtml = DOMPurify.sanitize(marked.parse(text || ''));
+            const sourcesHtml = (sources && sources.length > 0) ? buildSourcesHtml(sources) : '';
 
             div.innerHTML = `
                 <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0 text-sm shadow">
                     <i class="fa-solid fa-robot"></i>
                 </div>
-                <div class="flex-1 bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-none p-4 text-slate-800 leading-relaxed shadow-sm text-sm">
-                    <pre class="font-sans whitespace-pre-wrap">${escapeHtml(text)}</pre>
+                <div class="flex-1 bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-none p-4 text-slate-800 leading-relaxed shadow-sm text-sm relative group">
+                    <div class="markdown-body">${renderedHtml}</div>
                     ${sourcesHtml}
+                    <button onclick="copyToClipboard('${botId}-raw')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition bg-white hover:bg-slate-100 border border-slate-200 text-slate-500 hover:text-slate-700 px-2 py-1 rounded text-xs flex items-center gap-1 shadow-sm" title="답변 복사">
+                        <i class="fa-regular fa-copy"></i>
+                        <span>복사</span>
+                    </button>
+                    <textarea id="${botId}-raw" class="hidden">${escapeHtml(text)}</textarea>
                 </div>
             `;
             chatMessagesEl.appendChild(div);
             scrollToBottom();
         }
 
+        // 출처 카드 HTML 생성 헬퍼
+        function buildSourcesHtml(sources) {
+            return `
+                <div class="mt-3 pt-3 border-t border-slate-200 text-xs">
+                    <div class="font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                        <i class="fa-solid fa-bookmark text-blue-500"></i> 참고한 Confluence 문서 (${sources.length}건):
+                    </div>
+                    <div class="space-y-1.5">
+                        ${sources.map(s => `
+                            <div class="bg-white border border-slate-200 rounded-lg p-2.5 flex items-start justify-between gap-2 hover:border-blue-300 hover:shadow-sm transition">
+                                <div class="flex-1">
+                                    <a href="${s.url || '#'}" target="_blank" class="font-medium text-blue-600 hover:text-blue-700 hover:underline flex items-center gap-1">
+                                        <span>${escapeHtml(s.title)}</span>
+                                        <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                                    </a>
+                                    <div class="text-[11px] text-slate-400 mt-0.5">${s.path ? escapeHtml(s.path) : (s.category || '일반')}</div>
+                                </div>
+                                ${s.score ? `<span class="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-mono border border-blue-100">유사도: ${s.score.toFixed(2)}</span>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // 로딩 스피너
         function appendLoadingMessage() {
             const id = 'loading-' + Date.now();
             const div = document.createElement('div');
@@ -358,9 +525,9 @@
                 <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0 text-sm shadow">
                     <i class="fa-solid fa-robot"></i>
                 </div>
-                <div class="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-none p-4 text-slate-500 text-sm shadow-sm flex items-center gap-2">
+                <div class="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-none p-4 text-slate-500 text-sm shadow-sm flex items-center gap-2.5">
                     <i class="fa-solid fa-circle-notch fa-spin text-blue-600"></i>
-                    <span>Confluence 문서를 검색하고 답변을 생성하고 있습니다...</span>
+                    <span>Confluence 문서를 검색하고 답변을 작성하고 있습니다...</span>
                 </div>
             `;
             chatMessagesEl.appendChild(div);
@@ -377,7 +544,7 @@
             const div = document.createElement('div');
             div.className = 'flex gap-4 max-w-3xl mx-auto items-start';
             div.innerHTML = `
-                <div class="w-8 h-8 rounded-full bg-red-600 text-white flex items-center justify-center flex-shrink-0 text-sm">
+                <div class="w-8 h-8 rounded-full bg-red-600 text-white flex items-center justify-center flex-shrink-0 text-sm shadow">
                     <i class="fa-solid fa-triangle-exclamation"></i>
                 </div>
                 <div class="bg-red-50 border border-red-200 text-red-700 rounded-2xl rounded-tl-none p-4 text-sm shadow-sm">
@@ -404,6 +571,19 @@
                 } else {
                     el.className = 'group flex items-center justify-between px-3 py-2.5 rounded-lg text-sm cursor-pointer transition text-slate-300 hover:bg-slate-800';
                 }
+            });
+        }
+
+        // 클립보드 복사 헬퍼
+        function copyToClipboard(textareaId) {
+            const el = document.getElementById(textareaId);
+            if (!el) return;
+            navigator.clipboard.writeText(el.value).then(() => {
+                alert('답변 내용이 클립보드에 복사되었습니다! 📋');
+            }).catch(() => {
+                el.select();
+                document.execCommand('copy');
+                alert('답변 내용이 복사되었습니다! 📋');
             });
         }
 

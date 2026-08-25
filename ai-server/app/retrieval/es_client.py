@@ -118,7 +118,7 @@ def index_document_chunks(
             "category": chunk.get("metadata", {}).get("category", ""),
             "path": chunk.get("metadata", {}).get("path", ""),
             "links": chunk.get("metadata", {}).get("links", []),
-            "updated_at": chunk.get("metadata", {}).get("updated_at"),
+            "updated_at": chunk.get("metadata", {}).get("updated_at") or None,
             "primary_contributor": chunk.get("metadata", {}).get("primary_contributor", "알 수 없음"),
             "chunk_index": chunk["chunk_index"],
             "total_chunks": chunk["total_chunks"]
@@ -138,7 +138,9 @@ def index_document_chunks(
     try:
         # 벡터 필드가 커서 기본 chunk_size=500이면 요청 하나가 너무 커져 타임아웃나기 쉽다.
         # 배치를 작게 쪼개고, 클라이언트 request_timeout(60s)과 별개로 재시도도 켜둔다.
-        success_count, _ = helpers.bulk(es, actions, chunk_size=200, raise_on_error=True)
+        success_count, errors = helpers.bulk(es, actions, chunk_size=200, raise_on_error=False)
+        if errors:
+            print(f"[Elasticsearch Warning] {len(errors)}개 청크 색인 실패 (예: {errors[0]})")
         print(f"[Elasticsearch] 총 {success_count}개 청크 bulk 색인 성공")
         return success_count
     except Exception as e:
