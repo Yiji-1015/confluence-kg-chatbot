@@ -1,6 +1,6 @@
 # Confluence Knowledge Graph RAG 챗봇 — PLAN v2
 
-> Elasticsearch 런타임, 보안, 인덱스, OpenAI embedding 설정은 [`ELASTICSEARCH.md`](ELASTICSEARCH.md)를 최신 기준으로 사용한다. 아래 TEI/BGE-M3 관련 내용은 이전 설계 기록이다.
+> Elasticsearch 런타임, 보안, 인덱스 기준은 [`ELASTICSEARCH.md`](ELASTICSEARCH.md)를 따른다. 현재 embedding은 LiteLLM을 통한 OpenAI `text-embedding-3-small` 1536차원이다.
 
 > 원본: https://github.com/Yiji-1015/Confluence_Chatbot  
 > 기존 사내 Confluence 온보딩 RAG 챗봇을 기반으로 한 리팩토링 프로젝트
@@ -34,7 +34,7 @@
 ## 2. 전체 아키텍처
 
 ```text
-[React Frontend / Lovable]
+[Web UI]
           │
         REST
           │
@@ -52,7 +52,7 @@
              ┌──────────────────┼───────────────────┐
              │                  │                   │
          [Redis]          [Elasticsearch]        [Neo4j]
-      Session/Cache       Hybrid Retrieval     Knowledge Graph
+    Conversation Cache    Hybrid Retrieval     Knowledge Graph
              │
              └──────────────┐
                             ▼
@@ -60,8 +60,8 @@
                             │
                 ┌───────────┴───────────┐
                 │                       │
-        DeepSeek / OpenAI          [TEI :8081]
-              (LLM)              BGE-M3 Embedding
+        DeepSeek / OpenAI       OpenAI Embedding
+              (LLM)          text-embedding-3-small
 
                     [Langfuse]
               Trace / Eval / Experiment
@@ -75,8 +75,6 @@
 
 - 외부 REST API
 - session lifecycle 관리
-- 문서 metadata CRUD
-- indexing/job 요청 및 상태 관리
 - Python AI Server 호출 및 orchestration
 - 오류 응답 및 API contract 관리
 
@@ -91,7 +89,7 @@ AI Engine 역할을 담당한다.
 - 청킹
 - 임베딩
 - Elasticsearch 검색
-- Query Rewrite
+- Query Rewrite (고도화 예정, 현재 원문 질문 사용)
 - Knowledge Graph 구축 및 조회
 - Retrieval 결과 병합
 - LLM Answer Generation
@@ -116,7 +114,7 @@ LLM 호출을 단일 Gateway로 통합한다.
 ### Redis
 
 - 대화 session/history
-- embedding cache
+- embedding cache (미구현)
 
 ### Langfuse
 
@@ -207,55 +205,26 @@ Query
 
 Embedding 모델 간 벡터 공간이 서로 다르므로 서로 다른 모델을 동일한 Elasticsearch index에서 자동 fallback하지 않는다.
 
-### 기본 구성
+### 현재 구성
 
-사내 임베딩 API에 의존하지 않고 로컬 BGE-M3 단일 모델을 사용한다.
+LiteLLM Gateway를 통해 OpenAI `text-embedding-3-small` 단일 모델을 사용한다.
 
 ```text
-[TEI]
-BGE-M3 (local)
-     │
-     │ OpenAI 호환 /v1/embeddings
-     ▼
 [LiteLLM :4000]
      │
+     │ embedding-openai
      ▼
-[Python AI Server]
+[OpenAI text-embedding-3-small]
 ```
 
-### Serving
+Embedding fallback은 두지 않는다. 모델이 바뀌면 벡터 공간도 바뀌므로 별도 index 생성과 전체 재색인으로 처리한다.
 
-serving은 HuggingFace Text Embeddings Inference(TEI)를 사용한다.
-
-선택 근거:
-
-- 공개 저장소에서 Docker Compose만으로 전체 재현 가능 (§1 목표)
-- OpenAI 호환 `/v1/embeddings`를 제공하므로 LiteLLM에 OpenAI embedding과 동일한 형태로 등록 가능
-- CPU/GPU 이미지를 태그 교체로 전환 가능
-
-사내 API를 사용하지 않으므로 embedding fallback chain은 두지 않는다.
-단일 모델을 사용하여 embedding space를 유지한다.
-
-dense vector 차원은 1024이며 Elasticsearch mapping의 `dims`와 일치해야 한다.
-
-serving 방식(CPU/GPU, 양자화 여부)이 바뀌면 벡터가 달라지므로 전체 재색인이 필요하다.
-따라서 Phase 6 평가 이전에 serving 구성을 확정한다.
+dense vector 차원은 1536이며 Elasticsearch mapping의 `dims`와 일치해야 한다.
 
 Embedding cache key에는 반드시 모델 정보를 포함한다.
 
 ```text
 emb:{embedding_model}:{sha256(text)}
-```
-
-### OpenAI Embedding
-
-OpenAI embedding을 비교 실험할 경우 별도 index를 생성한다.
-
-예:
-
-```text
-confluence_bge_m3_v1
-confluence_openai_v1
 ```
 
 서로 다른 embedding model의 vector를 동일 index에서 혼합하지 않는다.
@@ -279,11 +248,10 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
 
-  - model_name: embedding-local
+  - model_name: embedding-openai
     litellm_params:
-      model: openai/bge-m3
-      api_base: os.environ/EMBEDDING_API_URL
-      api_key: dummy
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
 ```
 
 Python AI Server는 LiteLLM Gateway를 통해 LLM과 Embedding을 호출한다.
@@ -297,7 +265,7 @@ LLM 모델 변경은 application code가 아닌 LiteLLM configuration을 통해 
 LLM fallback과 Embedding fallback은 구분한다.
 
 - LLM: 서로 다른 모델 간 fallback 가능
-- Embedding: fallback을 사용하지 않는다 (로컬 BGE-M3 단일 모델, §5)
+- Embedding: fallback을 사용하지 않는다 (`text-embedding-3-small` 단일 모델, §5)
 
 Embedding 모델을 교체할 경우 fallback이 아닌 별도 index 생성 + 재색인으로 처리한다.
 
@@ -569,15 +537,13 @@ search:{index_version}:{sha256(query)}
 
 ## 13. Spring Boot API
 
-예상 API:
+현재 API:
 
 ```text
 POST /api/chat
-POST /api/sessions
-GET /api/sessions/{sessionId}
-POST /api/documents/index
-GET /api/jobs/{jobId}
-GET /api/documents/{documentId}
+GET /api/sessions?userId={userId}
+GET /api/sessions/{sessionId}/messages
+DELETE /api/sessions/{sessionId}
 ```
 
 Spring Boot는 Python AI Server와 HTTP로 통신한다.
@@ -602,7 +568,7 @@ AI 관련 데이터 접근은 Python AI Server를 통해 수행한다.
 - **Embedding**: OpenAI `text-embedding-3-small` (1536 dims)
 - **LLM Gateway**: LiteLLM (Proxy & Fallback)
 - **Primary LLM**: DeepSeek-Chat / OpenAI GPT-4o-mini
-- **Backend Application**: Spring Boot 3.x/4.x (Java 21, Spring Data JPA, RestClient)
+- **Backend Application**: Spring Boot 4.0.7 (Java 21, Spring Data JPA, RestClient)
 - **AI Server**: Python FastAPI (Async, Langfuse SDK)
 - **Cache & Session**: Redis 7 (30 min TTL sliding window)
 - **RDB**: PostgreSQL 16 (Chat history & audit)
@@ -613,7 +579,7 @@ AI 관련 데이터 접근은 Python AI Server를 통해 수행한다.
 
 ## 15. 안전성 및 보안 가드레일 (Safety & Guardrails)
 
-사내 지식베이스 챗봇의 보안성 및 신뢰성을 확보하기 위한 다계층 가드레일 아키텍처:
+다음은 계획된 가드레일이며 현재 입력 길이 제한과 Context 기반 응답 지침 외 항목은 구현되지 않았다.
 
 ```text
 [ 사용자 입력 ]
@@ -642,7 +608,7 @@ AI 관련 데이터 접근은 Python AI Server를 통해 수행한다.
 
 | 영역 | 기술 |
 |---|---|
-| Application Backend | Spring Boot 3.5.x |
+| Application Backend | Spring Boot 4.0.7 |
 | Language | Java |
 | AI Engine | Python / FastAPI |
 | LLM Gateway | LiteLLM |
@@ -650,12 +616,12 @@ AI 관련 데이터 접근은 Python AI Server를 통해 수행한다.
 | Korean Analyzer | Nori |
 | Graph DB | Neo4j |
 | Cache / Session | Redis |
-| Embedding | BGE-M3 (local) |
-| Embedding Serving | TEI (Text Embeddings Inference) |
+| Embedding | OpenAI text-embedding-3-small (1536차원) |
+| Embedding Serving | LiteLLM Gateway |
 | LLM | DeepSeek / OpenAI |
 | Evaluation / Trace | Langfuse |
 | Container | Docker Compose |
-| Frontend | React / Lovable |
+| Frontend | Spring Boot 정적 HTML/JavaScript |
 | Search Debugging | Kibana |
 
 Kibana는 Elasticsearch 개발/디버깅 도구로 사용하며 프로젝트 핵심 기능으로 취급하지 않는다.
@@ -664,15 +630,15 @@ Langfuse는 tracing, 실험 추적 및 평가를 위한 개발/관측 도구이�
 
 ---
 
-## 15. Docker Compose
+## Docker Compose
 
-초기 infrastructure:
+현재 로컬 infrastructure:
 
 ```text
 Elasticsearch
 Kibana
 LiteLLM
-TEI (Embedding)
+PostgreSQL
 Redis
 Neo4j
 ```
@@ -690,7 +656,7 @@ FastAPI
 
 ---
 
-## 16. 프로젝트 구조
+## 프로젝트 구조
 
 ```text
 confluence-kg-chatbot/
@@ -700,16 +666,14 @@ confluence-kg-chatbot/
 │   └── Spring Boot
 ├── ai-server/
 │   └── FastAPI
-├── evaluation/
-│   ├── datasets/
-│   ├── evaluators/
-│   └── experiments/
+├── ai-server/evaluation/
+│   └── datasets, generators, evaluators
 ├── litellm/
 │   └── config.yaml
 ├── elasticsearch/
 │   └── Dockerfile
-├── frontend/
-│   └── React / Lovable
+├── backend/src/main/resources/static/
+│   └── index.html
 ├── docker-compose.yml
 └── README.md
 ```
@@ -723,12 +687,12 @@ confluence-kg-chatbot/
 - [x] Repository 구조 정리 (`ai-server`, `elasticsearch`, `litellm`, `docs`, `history`)
 - [x] Elasticsearch + Nori (TLS + 인증 활성화, 8.15.0)
 - [x] Confluence parser 이식 및 개선 (표 그리드 복원, ac:link 내부링크, 첨부파일, 메타데이터 보존)
-- [x] 전체 562개 문서 chunking (2,690개 청크 분할 완료)
+- [x] 전체 Confluence 문서 chunking 검증 (실행 시점별 수치는 `history/`에 기록)
 - [x] OpenAI text-embedding-3-small 1536차원 임베딩 (LiteLLM 게이트웨이 연동)
 - [x] BM25 검색 (Nori 형태소 분석기, title^2.0 가중치)
 - [x] Vector kNN 검색 (코사인 유사도)
 - [x] Hybrid Retrieval (BM25 + Dense Vector 결합 검색)
-- [x] Confluence Ingest 배치 스크립트 (`scripts.ingest`, 2,690개 청크 색인 완료)
+- [x] Confluence 증분/전체 Ingest 배치 스크립트 (`scripts.ingest`) 검증
 
 ### Phase 2 — Application Backend
 
@@ -768,21 +732,21 @@ confluence-kg-chatbot/
 
 ### Phase 6 — Evaluation & Guardrails Testing
 
-- [ ] Langfuse evaluation dataset 생성
+- [x] Langfuse evaluation dataset 생성 (`confluence-rag-qa-v2`, 45문항)
 - [ ] BM25 baseline experiment
-- [ ] Hybrid Retrieval experiment
+- [x] Hybrid Retrieval experiment
 - [ ] Vector + Graph experiment
 - [ ] 관계형 질문 subset 평가
-- [ ] deterministic retrieval metrics 측정
-- [ ] LLM-as-a-Judge 평가
+- [x] deterministic `retrieval_hit` 측정
+- [x] LLM-as-a-Judge 평가 (GPT-4o judge)
 - [ ] latency / token / cost 측정
-- [ ] retrieval failure 분석
+- [x] retrieval failure 분석
 - [ ] 가드레일 방어율 (Prompt Injection, 탈옥 시도 차단율) 측정
 - [ ] 실패 trace를 evaluation dataset에 재추가
 
 ### Phase 7 — Frontend / Demo
 
-- [ ] Lovable frontend
+- [x] Spring Boot 정적 Web UI
 - [ ] 출처 표시
 - [ ] 담당자/조직 metadata 표시
 - [ ] demo dataset
@@ -1015,10 +979,9 @@ Query Rewrite 적용 후
 ## 21. Open Issues
 
 - [ ] 실제 Confluence sample 문서를 기준으로 Ontology schema 검증
-- [x] Local BGE-M3 serving 방식 결정 — TEI (§5)
-- [ ] LiteLLM에서 TEI embedding endpoint 연동 방식 검증
-- [ ] TEI 이미지 버전 태그 고정 및 배포 환경 CPU/GPU 결정
-- [ ] Elasticsearch Hybrid Retrieval score fusion 방식 결정
+- [x] OpenAI `text-embedding-3-small` 1536차원으로 embedding 기준 통일
+- [x] LiteLLM `embedding-openai` endpoint 연동
+- [x] Elasticsearch Hybrid Retrieval score fusion 적용 (Min-Max 정규화, BM25:kNN = 3:7)
 - [ ] Graph relation intent 분류 방식 결정
 - [ ] Knowledge Graph context와 Vector context 병합 방식 결정
 - [ ] Retrieval evaluation dataset 구성
