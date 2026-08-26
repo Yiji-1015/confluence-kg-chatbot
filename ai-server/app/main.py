@@ -8,8 +8,6 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Langfuse 환경변수 주입 (Python SDK 자동 인식용)
-# router보다 먼저 실행되어야 함: chat_router가 import되면서 get_client()가 호출되므로
-# 이 주입이 늦으면 SDK가 키 없이 초기화되어 버림
 if settings.LANGFUSE_PUBLIC_KEY:
     os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
 if settings.LANGFUSE_SECRET_KEY:
@@ -21,6 +19,7 @@ if settings.LANGFUSE_HOST:
 from app.api.v1.chat import router as chat_router
 from app.llm.litellm_client import embed_texts_async
 from app.retrieval.es_client import search_hybrid_async
+from app.kg.neo4j_client import close_neo4j_driver, verify_connectivity, search_graph_context_async
 
 
 @asynccontextmanager
@@ -29,6 +28,7 @@ async def lifespan(app: FastAPI):
     FastAPI 생명주기 관리자 (서버 시작 시 자동 Warmup 실행)
     - LiteLLM/OpenAI 임베딩 커넥션 풀 예열
     - Elasticsearch 하이브리드 검색 및 인덱스 캐시 예열
+    - Neo4j 지식 그래프 커넥션 풀 예열
     - 사용자의 '첫 질문' 콜드 스타트 지연(Cold Start Latency)을 사전에 제거
     """
     print("[Warmup] AI Engine 커넥션 풀 및 캐시 예열 시작...")
@@ -44,12 +44,17 @@ async def lifespan(app: FastAPI):
                 query_vector=query_vector,
                 top_k=1
             )
-        print("[Warmup] ✅ AI Engine 예열 완료! (LiteLLM TLS 소켓 및 ES 쿼리 캐시 활성화됨)")
+
+        # 3. Neo4j 지식 그래프 커넥션 풀 예열
+        await search_graph_context_async("warmup", limit=1)
+
+        print("[Warmup] ✅ AI Engine 예열 완료! (LiteLLM, ES, Neo4j 소켓 및 캐시 활성화됨)")
     except Exception as e:
         print(f"[Warmup Warning] 예열 중 오류 발생 (기본 서비스는 계속 동작합니다): {e}")
 
     yield
 
+    close_neo4j_driver()
     print("[Shutdown] AI Engine 정상 종료")
 
 
@@ -65,7 +70,7 @@ app = FastAPI(
 # CORS 미들웨어 설정 (Spring Boot 백엔드 및 로컬 테스트 통신 허용)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 실무 운영 환경에서는 특정 도메인으로 제한 가능
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,16 +86,17 @@ async def health_check():
     Docker 및 Spring Boot 백엔드 헬스체크용 엔드포인트.
     AI 엔진의 정상 구동 여부와 주요 연동 서비스(LiteLLM, ES, Neo4j)의 설정 URL을 반환합니다.
     """
+    kg_connected = verify_connectivity()
     return {
         "status": "healthy",
         "app_name": settings.APP_NAME,
         "litellm_url": settings.LITELLM_BASE_URL,
         "elasticsearch_url": settings.ELASTICSEARCH_URL,
-        "neo4j_uri": settings.NEO4J_URI
+        "neo4j_uri": settings.NEO4J_URI,
+        "neo4j_connected": kg_connected
     }
 
 
 if __name__ == "__main__":
     import uvicorn
-    # 로컬 개발용 서버 직접 실행 (포트 8000)
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

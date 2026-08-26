@@ -759,12 +759,12 @@ confluence-kg-chatbot/
 
 ### Phase 5 — Knowledge Graph
 
-- [ ] Ontology schema 확정
-- [ ] metadata 기반 deterministic edge 구축
-- [ ] LLM entity/relation extraction
-- [ ] Neo4j 적재
-- [ ] relation intent 판별
-- [ ] Graph + Vector Context Merge
+- [x] Ontology schema 확정 (Person, Document, Category)
+- [x] metadata 기반 deterministic edge 구축 (AUTHORED, TOP_CONTRIBUTOR, LINKS_TO, BELONGS_TO)
+- [x] Neo4j 대량 적재 스크립트 (`scripts.ingest_kg`, 514개 문서, 34명 인물, 1,570개 관계 엣지)
+- [x] relation intent 및 인물/문서 엔티티 식별 (1~2 hop 서브그래프 Cypher 탐색)
+- [x] Graph + Vector Context Merge (FastAPI chat 파이프라인 및 프롬프트 주입)
+- [x] GraphRAG 관계형 벤치마크 평가 하네스 구축 (`evaluation/run_kg_eval.py`, Entity Hit 76.7% 달성)
 
 ### Phase 6 — Evaluation & Guardrails Testing
 
