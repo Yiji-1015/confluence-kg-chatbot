@@ -199,6 +199,34 @@ Query
 
 향후 필요 시 reranking을 추가한다.
 
+### Versioned index + alias 재색인 전환 (계획)
+
+현재 애플리케이션은 concrete index인 `confluence-openai-v1`을 직접 사용한다. 또한 전체 재색인 시 기존 문서의 청크를 먼저 삭제하므로, embedding 또는 bulk 색인이 중간에 실패하면 서비스할 검색 데이터가 비는 위험이 있다. `confluence-current` alias는 기준 문서에 정의되어 있지만 아직 실제 코드와 인프라에는 적용되지 않았다.
+
+목표 구조:
+
+```text
+Application
+    │
+    ▼
+confluence-current  (alias)
+    │
+    ├── confluence-openai-v1  (현재)
+    └── confluence-openai-v2  (새 재색인 대상)
+```
+
+전체 재색인 절차는 다음과 같이 변경한다.
+
+1. 현재 서비스 중인 인덱스를 삭제하거나 수정하지 않는다.
+2. 새 버전의 concrete index를 생성하고 전체 문서를 색인한다.
+3. mapping, embedding 차원, 문서·청크 수와 대표 검색 질의를 검증한다.
+4. 검증이 통과한 경우 Elasticsearch aliases API 한 번의 요청으로 `confluence-current`를 새 인덱스로 원자적으로 전환한다.
+5. 애플리케이션의 검색·증분 색인 대상은 concrete index가 아닌 `confluence-current`로 통일한다.
+6. 전환 후 smoke test가 끝날 때까지 이전 인덱스를 보관하고, 문제가 있으면 alias를 이전 인덱스로 되돌린다.
+7. 이전 인덱스 삭제는 자동화하지 않고 보관 기간과 복구 가능 여부를 확인한 뒤 수동으로 수행한다.
+
+새 인덱스의 색인이 실패하면 해당 새 인덱스만 폐기하며 기존 alias와 서비스 데이터에는 영향을 주지 않아야 한다. Embedding 모델·차원·mapping처럼 호환성이 깨지는 변경은 새 버전 인덱스를 만들고, 일반 문서 변경은 alias가 가리키는 현재 인덱스에 증분 반영한다.
+
 ---
 
 ## 5. Embedding 설계
@@ -693,6 +721,7 @@ confluence-kg-chatbot/
 - [x] Vector kNN 검색 (코사인 유사도)
 - [x] Hybrid Retrieval (BM25 + Dense Vector 결합 검색)
 - [x] Confluence 증분/전체 Ingest 배치 스크립트 (`scripts.ingest`) 검증
+- [ ] Versioned index 전체 색인 + `confluence-current` alias 원자적 전환 및 롤백 구현
 
 ### Phase 2 — Application Backend
 
@@ -982,6 +1011,7 @@ Query Rewrite 적용 후
 - [x] OpenAI `text-embedding-3-small` 1536차원으로 embedding 기준 통일
 - [x] LiteLLM `embedding-openai` endpoint 연동
 - [x] Elasticsearch Hybrid Retrieval score fusion 적용 (Min-Max 정규화, BM25:kNN = 3:7)
+- [ ] 전체 재색인을 versioned index + `confluence-current` alias 전환 방식으로 변경
 - [ ] Graph relation intent 분류 방식 결정
 - [ ] Knowledge Graph context와 Vector context 병합 방식 결정
 - [ ] Retrieval evaluation dataset 구성
