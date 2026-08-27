@@ -1,7 +1,6 @@
 import re
 import httpx
 import pandas as pd
-from collections import Counter
 from typing import List, Dict, Any, Optional
 from app.config import settings
 
@@ -51,43 +50,6 @@ def _get_auth_headers() -> tuple:
     email = settings.CONFLUENCE_EMAIL or ""
     token = settings.CONFLUENCE_API_TOKEN or ""
     return (email, token)
-
-
-def get_primary_contributor(page_id: str) -> str:
-    """
-    문서의 버전 히스토리 전체를 분석해 "최다 수정자"(primary contributor)를 찾는 함수.
-    작성자(author)와 달리 문서를 실제로 가장 많이 고친 사람을 찾아내므로,
-    Knowledge Graph의 TOP_CONTRIBUTOR 관계(PLAN.md §7) 근거 자료로 쓸 수 있다.
-
-    동률일 경우 가장 최근 수정자를 우선한다.
-    """
-    url = f"{settings.CONFLUENCE_BASE_URL}/rest/api/content/{page_id}/version"
-    params = {"limit": 200}
-    auth = _get_auth_headers()
-
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(url, params=params, auth=auth)
-            response.raise_for_status()
-            versions = response.json().get("results", [])
-
-        contributors = [
-            v.get("by", {}).get("displayName")
-            for v in versions
-            if v.get("by", {}).get("displayName")
-        ]
-        if not contributors:
-            return "알 수 없음"
-
-        last_modifier = contributors[-1]
-        most_common_contributor, count = Counter(contributors).most_common(1)[0]
-
-        # 동률이면(즉 모든 사람이 1번씩만 수정) 가장 최근 수정자를 우선한다
-        return last_modifier if count == 1 else most_common_contributor
-
-    except Exception as e:
-        print(f"[Confluence Error] 최다 수정자 조회 실패 (ID: {page_id}): {e}")
-        return "알 수 없음"
 
 
 def fetch_all_page_ids(space_key: Optional[str] = None) -> List[str]:

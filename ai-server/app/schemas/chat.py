@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 
 class MessageRole(BaseModel):
@@ -30,14 +30,6 @@ class SourceDocument(BaseModel):
     score: Optional[float] = Field(default=None, description="하이브리드 검색 유사도/정확도 점수")
 
 
-class GraphContext(BaseModel):
-    """
-    Phase 5 지식 그래프(Neo4j) 탐색 결과 맥락 모델
-    """
-    entities: Optional[List[Dict[str, Any]]] = Field(default=[], description="추출된 그래프 엔티티 노드 목록")
-    relations: Optional[List[Dict[str, Any]]] = Field(default=[], description="탐색된 엔티티 간 관계 엣지 목록")
-
-
 class ChatResponse(BaseModel):
     """
     Python AI 서버가 Spring Boot 백엔드로 돌려주는 최종 응답 데이터 모델
@@ -46,4 +38,3 @@ class ChatResponse(BaseModel):
     rewrittenQuery: Optional[str] = Field(default=None, description="검색용으로 재작성된 단독 질문 (Stand-alone Query)")
     answer: str = Field(..., description="LLM이 최종 생성한 답변 텍스트")
     sources: List[SourceDocument] = Field(default=[], description="검색에 참고된 Confluence 출처 문서 목록")
-    graphContext: Optional[GraphContext] = Field(default=None, description="지식 그래프 맥락 (Phase 5 이전에는 None)")

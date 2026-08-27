@@ -10,8 +10,6 @@
 | Elasticsearch | `9200` | `127.0.0.1`만 | `https://localhost:9200` | BM25 + Vector kNN 하이브리드 검색 (TLS+인증 필수) |
 | Kibana | `5601` | 전체 인터페이스 | `http://localhost:5601` | Elasticsearch 디버깅 UI |
 | LiteLLM | `4000` | 전체 인터페이스 | `http://localhost:4000` | LLM/임베딩 게이트웨이 |
-| Neo4j (Browser) | `7474` | 전체 인터페이스 | `http://localhost:7474` | Knowledge Graph 브라우저 UI |
-| Neo4j (Bolt) | `7687` | 전체 인터페이스 | `bolt://localhost:7687` | Knowledge Graph 드라이버 접속 |
 | PostgreSQL | `5432` | 전체 인터페이스 | `postgresql://localhost:5432` | 대화방·메시지 영구 저장 |
 | Redis | `6379` | 전체 인터페이스 | `redis://localhost:6379` | 최근 대화 세션 캐시 |
 | FastAPI AI Engine | `8000` | 전체 인터페이스 | `http://localhost:8000` | Hybrid RAG 파이프라인 |

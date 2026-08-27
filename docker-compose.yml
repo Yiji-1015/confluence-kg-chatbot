@@ -12,7 +12,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: kg-postgres
+    container_name: rag-postgres
     ports:
       - "5432:5432"
     environment:
@@ -31,7 +31,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: kg-redis
+    container_name: rag-redis
     command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"

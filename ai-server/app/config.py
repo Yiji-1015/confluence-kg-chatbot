@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     프로젝트 중앙 환경 변수 및 설정 관리 클래스 (.env 연동)
     """
     # 1. 앱기본 설정
-    APP_NAME: str = "Confluence KG Chatbot - AI Engine"
+    APP_NAME: str = "Confluence RAG Chatbot - AI Engine"
     DEBUG: bool = True
 
     @field_validator("DEBUG", mode="before")
@@ -41,21 +41,16 @@ class Settings(BaseSettings):
     ELASTICSEARCH_PASSWORD: Optional[str] = None
     ELASTICSEARCH_CA_CERT: str = str(REPO_ROOT / "elasticsearch" / "certs" / "ca" / "ca.crt")
 
-    # 4. Neo4j Knowledge Graph 지식 그래프 DB 설정
-    NEO4J_URI: str = "bolt://127.0.0.1:7687"
-    NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "kg-password"
-
-    # 5. Redis 캐시 및 대화 세션 저장소 설정
+    # 4. Redis 캐시 및 대화 세션 저장소 설정
     REDIS_URL: str = "redis://127.0.0.1:6379"
 
-    # 6. Confluence API 연동 설정
+    # 5. Confluence API 연동 설정
     CONFLUENCE_BASE_URL: str = "https://lloydk.atlassian.net/wiki"
     CONFLUENCE_SPACE_KEY: str = "LLOYDK"
     CONFLUENCE_EMAIL: Optional[str] = None
     CONFLUENCE_API_TOKEN: Optional[str] = None
 
-    # 7. Langfuse LLM Observability & Tracing 설정
+    # 6. Langfuse LLM Observability & Tracing 설정
     LANGFUSE_PUBLIC_KEY: Optional[str] = None
     LANGFUSE_SECRET_KEY: Optional[str] = None
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"

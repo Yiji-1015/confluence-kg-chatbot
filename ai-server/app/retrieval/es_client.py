@@ -63,9 +63,7 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                     "url": {"type": "keyword"},      # Confluence 문서 원본 URL
                     "category": {"type": "keyword"}, # 대분류 카테고리 (Confluence 조상 페이지 기준, 예: "솔루션/개발")
                     "path": {"type": "keyword"},     # 전체 계층 경로 (예: "기획 / PoC / SPRINT_Palantir")
-                    "links": {"type": "keyword"},    # 본문 내 언급된 참조 링크 목록
                     "updated_at": {"type": "date"},  # Confluence 문서 최종 수정 시각 (증분 재색인 비교 기준)
-                    "primary_contributor": {"type": "keyword"},  # 버전 히스토리 기준 최다 수정자
                     "chunk_index": {"type": "integer"},
                     "total_chunks": {"type": "integer"},
                     "text_vector": {                 # OpenAI text-embedding-3-small 1536차원 임베딩 벡터 필드
@@ -117,9 +115,7 @@ def index_document_chunks(
             "url": chunk.get("metadata", {}).get("url", ""),
             "category": chunk.get("metadata", {}).get("category", ""),
             "path": chunk.get("metadata", {}).get("path", ""),
-            "links": chunk.get("metadata", {}).get("links", []),
             "updated_at": chunk.get("metadata", {}).get("updated_at") or None,
-            "primary_contributor": chunk.get("metadata", {}).get("primary_contributor", "알 수 없음"),
             "chunk_index": chunk["chunk_index"],
             "total_chunks": chunk["total_chunks"]
         }
@@ -296,7 +292,6 @@ def search_hybrid(
             "category": source.get("category"),
             "path": source.get("path"),
             "space_key": source.get("space_key"),
-            "primary_contributor": source.get("primary_contributor"),
             "score": combined_score
         })
 

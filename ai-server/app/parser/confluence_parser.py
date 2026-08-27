@@ -21,7 +21,7 @@ def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) ->
     5. 남은 Confluence 네임스페이스 태그(ac:*, ri:* 등)는 unwrap하여 본문에 이상한 태그가 남지 않게 정리
     """
     if not html_content:
-        return {"cleaned_text": "", "metadata": metadata or {}, "links": [], "attachments": []}
+        return {"cleaned_text": "", "metadata": metadata or {}, "attachments": []}
 
     soup = BeautifulSoup(html_content, "html.parser")
 
@@ -37,21 +37,15 @@ def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) ->
             attachments.append(os.path.splitext(fname)[0])
 
     # 3-1. Confluence 내부 문서 링크(ac:link) — <a href>가 아니라 ac:link/ri:page 조합으로 표현됨
-    links: List[str] = []
     for link in soup.find_all("ac:link"):
         page_ref = link.find("ri:page")
         target_title = page_ref.get("ri:content-title", "") if page_ref else ""
         body_text = link.get_text(strip=True)
 
         if target_title:
-            links.append(target_title)
             link.replace_with(f"[{body_text}](관련문서: {target_title})")
         else:
             link.replace_with(body_text)
-
-    # 3-2. 일반 외부/렌더링된 링크(<a href>)
-    for a_tag in soup.find_all("a", href=True):
-        links.append(a_tag["href"])
 
     # 4. 표(<table>) 구조를 rowspan/colspan까지 반영해 마크다운 표로 보존
     for table in soup.find_all("table"):
@@ -70,7 +64,6 @@ def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) ->
     return {
         "cleaned_text": cleaned_text,
         "metadata": metadata or {},
-        "links": links,
         "attachments": attachments,
     }
 

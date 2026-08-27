@@ -18,7 +18,6 @@ from app.core.confluence_client import (
     fetch_pages_by_ids,
     fetch_pages_with_category,
     filter_pages_by_category,
-    get_primary_contributor,
 )
 from app.parser.confluence_parser import parse_confluence_html, split_text_into_chunks
 from app.llm.litellm_client import embed_texts
@@ -71,10 +70,9 @@ def ingest(limit: int = None, batch_size: int = 50, category: str = None, force:
         print("재색인할 문서가 없어 종료합니다.")
         return
 
-    print("[3/5] 최다 수정자 조회 및 파싱/청킹 중...")
+    print("[3/5] 문서 파싱/청킹 중...")
     all_chunks = []
     for page in target_pages:
-        primary_contributor = get_primary_contributor(page["id"])
         parsed = parse_confluence_html(
             page["html_body"],
             metadata={
@@ -84,11 +82,8 @@ def ingest(limit: int = None, batch_size: int = 50, category: str = None, force:
                 "category": category_map.get(page["id"], ""),
                 "path": path_map.get(page["id"], ""),
                 "updated_at": page.get("last_updated"),
-                "primary_contributor": primary_contributor,
             },
         )
-        # 본문에서 추출된 참조 링크 목록 추가
-        parsed["metadata"]["links"] = parsed.get("links", [])
 
         chunks = split_text_into_chunks(
             doc_id=page["id"],

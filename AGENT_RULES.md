@@ -25,7 +25,6 @@ Python FastAPI
 - Retrieval
 - Query Rewrite
 - Embedding
-- Knowledge Graph
 - LLM Pipeline
 
 ## 도구 사용 규칙
@@ -54,7 +53,6 @@ Python FastAPI
 가능하면 다음 비교를 수행한다.
 - BM25
 - Hybrid Retrieval
-- Hybrid + Graph
 - Query Rewrite 적용 여부
 
 Langfuse Trace를 남길 수 있으면 남긴다.
@@ -71,10 +69,9 @@ Langfuse Trace를 남길 수 있으면 남긴다.
 2. Spring ↔ FastAPI
 3. LiteLLM
 4. Redis
-5. Knowledge Graph
-6. Evaluation
-7. Frontend
-8. Packaging
+5. Evaluation
+6. Frontend
+7. Packaging
 
 ## 완료 기준
 - 빌드 성공

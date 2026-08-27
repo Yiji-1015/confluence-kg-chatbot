@@ -23,8 +23,8 @@
 
 | 설정 | 기준값 |
 | --- | --- |
-| `cluster.name` | `confluence-kg` |
-| `node.name` | `kg-es-01` |
+| `cluster.name` | `confluence-rag` |
+| `node.name` | `rag-es-01` |
 | `discovery.type` | `single-node` |
 | `xpack.security.enabled` | `true` |
 | HTTP TLS | 활성화 |

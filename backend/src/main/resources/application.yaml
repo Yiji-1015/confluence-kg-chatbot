@@ -3,9 +3,9 @@ server:
 
 spring:
   application:
-    name: confluence-kg-chatbot-backend
+    name: confluence-rag-chatbot-backend
 
-  # 1. PostgreSQL 데이터베이스 연결 설정 (docker-compose kg-postgres:5432)
+  # 1. PostgreSQL 데이터베이스 연결 설정 (docker-compose rag-postgres:5432)
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:chatbot_db}
     username: ${POSTGRES_USER:postgres}
@@ -23,7 +23,7 @@ spring:
         default_batch_fetch_size: 100
     open-in-view: false
 
-  # 3. Redis 연결 설정 (docker-compose kg-redis:6379, 세션 및 캐시)
+  # 3. Redis 연결 설정 (docker-compose rag-redis:6379, 세션 및 캐시)
   data:
     redis:
       host: ${REDIS_HOST:localhost}

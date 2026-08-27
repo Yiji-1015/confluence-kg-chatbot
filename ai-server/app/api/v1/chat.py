@@ -1,8 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
-from app.schemas.chat import ChatRequest, ChatResponse, SourceDocument, GraphContext
+from app.schemas.chat import ChatRequest, ChatResponse, SourceDocument
 from app.config import settings
 from app.retrieval.es_client import search_hybrid_async
-from app.kg.neo4j_client import search_graph_context_async
 from app.llm.litellm_client import embed_texts_async, generate_answer_async
 from app.llm.model_router import select_optimal_model
 
@@ -24,7 +23,7 @@ router = APIRouter(prefix="/internal/chat", tags=["Internal Chat AI Engine"])
 @observe(name="confluence-rag-chat")
 async def process_chat(request: ChatRequest) -> ChatResponse:
     """
-    Spring Boot 백엔드에서 호출하는 메인 AI RAG 채팅 엔드포인트 (하이브리드 검색 + Neo4j Graph Context 결합).
+    Spring Boot 백엔드에서 호출하는 메인 AI RAG 채팅 엔드포인트.
     """
     try:
         # 1. 질문 재작성 (Phase 4 전까지는 사용자 질문 그대로 사용)
@@ -42,7 +41,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
                 langfuse_context.update_current_trace(
                     session_id=request.sessionId,
                     input=request.query,
-                    tags=["confluence-rag", "hybrid-search", "graphrag", selected_model],
+                    tags=["confluence-rag", "hybrid-search", selected_model],
                     metadata={
                         "selected_model": selected_model,
                         "routing_reason": routing_reason,
@@ -66,20 +65,15 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
 
         sources = []
         context_blocks = []
-        retrieved_doc_ids = []
-
         if es_results:
             for item in es_results:
                 doc_id = str(item.get("doc_id", "")).strip()
-                if doc_id:
-                    retrieved_doc_ids.append(doc_id)
-
                 sources.append(
                     SourceDocument(
                         documentId=doc_id or "doc-sample",
                         title=item.get("title", "제목 없음"),
                         url=item.get("url", settings.CONFLUENCE_BASE_URL),
-                        author=item.get("author") or item.get("primary_contributor") or "Unknown",
+                        author=item.get("author") or "Unknown",
                         category=item.get("category") or item.get("space_key") or settings.CONFLUENCE_SPACE_KEY,
                         score=item.get("score", 0.0)
                     )
@@ -88,31 +82,13 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
                 path_info = f" (경로: {item['path']})" if item.get("path") else ""
                 context_blocks.append(f"[문서 제목: {item.get('title')}{path_info}]\n{item.get('text', '')}")
 
-        # 5. Knowledge Graph 1~2 hop 서브그래프 비동기 탐색
-        graph_data = await search_graph_context_async(
-            query=rewritten_query,
-            doc_ids=retrieved_doc_ids,
-            limit=10
-        )
-
-        graph_context = None
-        if graph_data.get("entities") or graph_data.get("relations"):
-            graph_context = GraphContext(
-                entities=graph_data.get("entities", []),
-                relations=graph_data.get("relations", [])
-            )
-
-        # 지식 그래프 관계 정보가 존재하면 LLM 프롬프트 Context 블록 상단에 주입
-        if graph_data.get("formatted_context"):
-            context_blocks.insert(0, graph_data["formatted_context"])
-
-        # 6. Context 결합
+        # 5. Context 결합
         if context_blocks:
             context_text = "\n\n---\n\n".join(context_blocks)
         else:
             context_text = "관련된 사내 Confluence 문서를 찾지 못했습니다."
 
-        # 7. LiteLLM 기반 최종 답변 비동기 생성 (동적 라우팅된 모델 사용)
+        # 6. LiteLLM 기반 최종 답변 비동기 생성 (동적 라우팅된 모델 사용)
         answer_text = await generate_answer_async(
             query=rewritten_query,
             context=context_text,
@@ -131,8 +107,7 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
             sessionId=request.sessionId,
             rewrittenQuery=rewritten_query,
             answer=answer_text,
-            sources=sources,
-            graphContext=graph_context
+            sources=sources
         )
 
     except Exception as e:

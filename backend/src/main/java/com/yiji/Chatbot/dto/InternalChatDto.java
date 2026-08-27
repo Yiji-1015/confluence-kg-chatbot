@@ -6,7 +6,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Python AI Engine (POST /internal/chat) 통신 전용 DTO 클래스 모음
@@ -55,6 +54,5 @@ public class InternalChatDto {
         private String rewrittenQuery;
         private String answer;
         private List<SourceDocument> sources;
-        private Map<String, Object> graphContext;
     }
 }

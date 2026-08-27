@@ -15,7 +15,7 @@
 services:
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
-    container_name: kg-litellm
+    container_name: rag-litellm
     ports:
       - "4000:4000"
     volumes:

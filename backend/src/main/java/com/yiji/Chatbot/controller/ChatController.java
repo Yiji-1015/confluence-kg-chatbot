@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * Confluence KG Chatbot 메인 REST API 컨트롤러
+ * Confluence RAG Chatbot 메인 REST API 컨트롤러
  */
 @RestController
 @RequestMapping("/api")

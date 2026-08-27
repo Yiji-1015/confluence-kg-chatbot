@@ -18,7 +18,7 @@ services:
   # [1/4] TLS 인증서 발급 부트스트랩 (인증서가 이미 존재하면 재발급 건너뜀)
   es-setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-    container_name: kg-es-setup
+    container_name: rag-es-setup
     user: "0"
     volumes:
       - ./elasticsearch/certs:/usr/share/elasticsearch/config/certs
@@ -40,15 +40,15 @@ services:
   # [2/4] Elasticsearch 본체 기동 (Nori 플러그인 포함)
   elasticsearch:
     build: ./elasticsearch
-    container_name: kg-elasticsearch
+    container_name: rag-elasticsearch
     depends_on:
       es-setup:
         condition: service_completed_successfully
     environment:
-      - node.name=kg-es-01
-      - cluster.name=confluence-kg
+      - node.name=rag-es-01
+      - cluster.name=confluence-rag
       - discovery.type=single-node
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-kg-password}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-rag-password}
       - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=true
       - xpack.security.http.ssl.key=certs/elasticsearch/elasticsearch.key
@@ -69,7 +69,7 @@ services:
     healthcheck:
       test: >
         curl -s --cacert config/certs/ca/ca.crt
-        -u elastic:${ELASTIC_PASSWORD:-kg-password}
+        -u elastic:${ELASTIC_PASSWORD:-rag-password}
         "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"
         | grep -q '"status":"yellow"\|"status":"green"'
       interval: 10s
@@ -81,7 +81,7 @@ services:
   # [3/4] kibana_system 계정 비밀번호 설정 (Kibana 연결 전용)
   kibana-setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-    container_name: kg-kibana-setup
+    container_name: rag-kibana-setup
     volumes:
       - ./elasticsearch/certs:/certs:ro
     depends_on:
@@ -89,19 +89,19 @@ services:
         condition: service_healthy
     command: >
       curl -s -X POST --cacert /certs/ca/ca.crt
-      -u elastic:${ELASTIC_PASSWORD:-kg-password}
+      -u elastic:${ELASTIC_PASSWORD:-rag-password}
       -H "Content-Type: application/json"
       https://elasticsearch:9200/_security/user/kibana_system/_password
-      -d "{\"password\":\"${KIBANA_PASSWORD:-kg-password}\"}"
+      -d "{\"password\":\"${KIBANA_PASSWORD:-rag-password}\"}"
 
   # [4/4] Kibana 대시보드 UI
   kibana:
     image: docker.elastic.co/kibana/kibana:8.15.0
-    container_name: kg-kibana
+    container_name: rag-kibana
     environment:
       - ELASTICSEARCH_HOSTS=https://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-kg-password}
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-rag-password}
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=/usr/share/kibana/config/certs/ca/ca.crt
     ports:
       - "5601:5601"
