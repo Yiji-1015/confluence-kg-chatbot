@@ -166,6 +166,12 @@ def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
     return normalized
 
 
+# 재랭킹에 실제로 쓰는 필드만 받는다. _source를 지정하지 않으면 1536차원 text_vector까지
+# 딸려와서, 후보 100청크 기준 요청당 수 MB를 전송·파싱하고 그대로 버리게 된다.
+_SEARCH_SOURCE_FIELDS = [
+    "chunk_id", "doc_id", "title", "text", "url", "author", "category", "path", "space_key",
+]
+
 # 문서 하나에서 이어붙일 최대 청크 수 (비정상적으로 긴 문서가 요청을 부풀리는 것 방지)
 _MAX_CHUNKS_PER_DOC = 50
 
@@ -274,7 +280,11 @@ def search_hybrid(
     knn_hits: List[Dict[str, Any]] = []
 
     try:
-        bm25_res = es.search(index=target_index, body={"query": bm25_query, "size": candidate_size})
+        bm25_res = es.search(index=target_index, body={
+            "query": bm25_query,
+            "size": candidate_size,
+            "_source": _SEARCH_SOURCE_FIELDS,
+        })
         bm25_hits = bm25_res.get("hits", {}).get("hits", [])
 
         if query_vector:
@@ -286,7 +296,11 @@ def search_hybrid(
             }
             if space_key:
                 knn_query["filter"] = {"term": {"space_key": space_key}}
-            knn_res = es.search(index=target_index, body={"knn": knn_query, "size": candidate_size})
+            knn_res = es.search(index=target_index, body={
+                "knn": knn_query,
+                "size": candidate_size,
+                "_source": _SEARCH_SOURCE_FIELDS,
+            })
             knn_hits = knn_res.get("hits", {}).get("hits", [])
 
     except Exception as e:
