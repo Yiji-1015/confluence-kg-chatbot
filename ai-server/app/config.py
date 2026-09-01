@@ -41,16 +41,30 @@ class Settings(BaseSettings):
     ELASTICSEARCH_PASSWORD: Optional[str] = None
     ELASTICSEARCH_CA_CERT: str = str(REPO_ROOT / "elasticsearch" / "certs" / "ca" / "ca.crt")
 
-    # 4. Redis 캐시 및 대화 세션 저장소 설정
-    REDIS_URL: str = "redis://127.0.0.1:6379"
+    # 검색 튜닝 파라미터 — 코드 수정/재빌드 없이 .env로 바꿔가며 실험한다.
+    # (재색인은 필요 없다. 색인 데이터는 그대로 두고 검색 단계만 달라지는 값들)
+    RETRIEVAL_TOP_K: int = 5              # 최종 컨텍스트에 넣을 "서로 다른 문서" 수
+    RETRIEVAL_CANDIDATE_SIZE: int = 50    # BM25/kNN이 각각 가져올 재랭킹 후보 청크 수
+    DOC_CONTEXT_MAX_CHARS: int = 3000     # 문서 하나를 컨텍스트에 넣을 때의 최대 글자 수
 
-    # 5. Confluence API 연동 설정
+    # 하이브리드 결합 가중치. 두 점수를 각각 0~1로 정규화한 뒤 이 비율로 합산한다.
+    # 기본 4:6 — 벡터(의미)를 우위에 두되, 고유명사/날짜처럼 토큰이 정확히 겹치는
+    # 질문에서 키워드 매칭이 밀리지 않도록 BM25 쪽 발언권을 남겨둔 값.
+    HYBRID_BM25_WEIGHT: float = 4.0
+    HYBRID_KNN_WEIGHT: float = 6.0
+
+    # 답변 생성 temperature. 미지정 시 OpenAI/DeepSeek 기본값은 0(결정적)이 아니라 1.0이라,
+    # 같은 질문·같은 컨텍스트에도 답이 매번 달라져 평가 점수가 흔들린다.
+    # RAG는 컨텍스트 충실도가 목적이므로 0으로 고정한다.
+    LLM_TEMPERATURE: float = 0.0
+
+    # 4. Confluence API 연동 설정
     CONFLUENCE_BASE_URL: str = "https://lloydk.atlassian.net/wiki"
     CONFLUENCE_SPACE_KEY: str = "LLOYDK"
     CONFLUENCE_EMAIL: Optional[str] = None
     CONFLUENCE_API_TOKEN: Optional[str] = None
 
-    # 6. Langfuse LLM Observability & Tracing 설정
+    # 5. Langfuse LLM Observability & Tracing 설정
     LANGFUSE_PUBLIC_KEY: Optional[str] = None
     LANGFUSE_SECRET_KEY: Optional[str] = None
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"

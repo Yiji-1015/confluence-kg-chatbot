@@ -30,6 +30,8 @@ def select_optimal_model(
     total_len = query_len + history_len
 
     # 규칙 1: 12글자 미만 (모호하거나 짧은 질문)
+    # 짧은 질문일수록 단서가 적어 의도 파악에 실패하는 사례가 실사용에서 관찰됐다.
+    # 비용 최적화가 아니라 "짧아서 못 알아듣는" 실패를 줄이려고 상위 모델로 올린다.
     if query_len < 12:
         return "gpt-4o", f"short_query ({query_len} chars < 12, intent clarification)"
 

@@ -52,7 +52,11 @@ def generate_chat_completion(messages: List[dict], model: Optional[str] = None) 
     url = f"{settings.LITELLM_BASE_URL}/v1/chat/completions"
 
     with httpx.Client(timeout=30.0) as client:
-        response = client.post(url, json={"model": target_model, "messages": messages})
+        response = client.post(url, json={
+            "model": target_model,
+            "messages": messages,
+            "temperature": settings.LLM_TEMPERATURE,
+        })
         response.raise_for_status()
         data = response.json()
 
@@ -67,7 +71,11 @@ async def generate_chat_completion_async(messages: List[dict], model: Optional[s
     url = f"{settings.LITELLM_BASE_URL}/v1/chat/completions"
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, json={"model": target_model, "messages": messages})
+        response = await client.post(url, json={
+            "model": target_model,
+            "messages": messages,
+            "temperature": settings.LLM_TEMPERATURE,
+        })
         response.raise_for_status()
         data = response.json()
 

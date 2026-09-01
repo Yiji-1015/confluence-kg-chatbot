@@ -1,5 +1,5 @@
 """
-Langfuse Dataset(confluence-rag-qa-v1)에 대해 실제 RAG 파이프라인(검색+생성)을 돌리고
+Langfuse Dataset(confluence-rag-qa-v2)에 대해 실제 RAG 파이프라인(검색+생성)을 돌리고
 3가지 점수를 매겨서 Langfuse에 기록한다.
 
 - retrieval_hit: ES 하이브리드 검색이 정답 문서를 top_k 안에 찾았는가 (검색 문제 진단)
@@ -36,10 +36,11 @@ from langfuse.experiment import Evaluation
 
 from app.retrieval.es_client import search_hybrid
 from app.llm.litellm_client import embed_texts, generate_answer, generate_chat_completion
+from app.llm.model_router import select_optimal_model
+from app.llm.prompts import build_context_text
 
 DATASET_NAME = "confluence-rag-qa-v2"
 JUDGE_MODEL = "gpt-4o"
-TOP_K = 3
 _SCORE_RE = re.compile(r"SCORE:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 _REASON_RE = re.compile(r"REASON:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
@@ -55,21 +56,19 @@ def _parse_judge_response(raw: str):
 
 
 def rag_task(*, item, **kwargs):
+    """
+    실서비스 경로(api/v1/chat.py)와 같은 검색·컨텍스트 조립·모델 라우팅을 그대로 태운다.
+    여기가 실서비스와 어긋나면, 평가 점수는 실제로 돌아가지 않는 파이프라인을 측정하게 된다.
+    """
     query = item.input
     query_vector = embed_texts([query])[0]
-    results = search_hybrid(query_text=query, query_vector=query_vector, top_k=TOP_K)
+    results = search_hybrid(query_text=query, query_vector=query_vector)
 
     retrieved_doc_ids = [r.get("doc_id") for r in results]
-    context_blocks = [
-        f"[문서 제목: {r.get('title')}]\n{r.get('text', '')}" for r in results
-    ]
-    context_text = (
-        "\n\n---\n\n".join(context_blocks)
-        if context_blocks
-        else "관련된 사내 Confluence 문서를 찾지 못했습니다."
-    )
+    context_text = build_context_text(results)
 
-    answer = generate_answer(query=query, context=context_text)
+    selected_model, _ = select_optimal_model(query=query)
+    answer = generate_answer(query=query, context=context_text, model=selected_model)
 
     return {
         "answer": answer,

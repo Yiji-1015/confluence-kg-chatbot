@@ -2,7 +2,6 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -59,15 +58,6 @@ app = FastAPI(
     version="1.0.0",
     debug=settings.DEBUG,
     lifespan=lifespan
-)
-
-# CORS 미들웨어 설정 (Spring Boot 백엔드 및 로컬 테스트 통신 허용)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 # API 라우터 등록 (/internal/chat 메인 채팅 엔드포인트)

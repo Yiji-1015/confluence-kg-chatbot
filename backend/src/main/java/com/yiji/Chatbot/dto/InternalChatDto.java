@@ -51,7 +51,6 @@ public class InternalChatDto {
     @AllArgsConstructor
     public static class Response {
         private String sessionId;
-        private String rewrittenQuery;
         private String answer;
         private List<SourceDocument> sources;
     }

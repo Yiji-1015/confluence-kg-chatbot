@@ -144,12 +144,6 @@ def index_document_chunks(
         return 0
 
 
-# BM25:kNN 결합 가중치. 두 점수 모두 0~1로 정규화한 뒤 이 비율로 합산한다.
-_BM25_WEIGHT = 3.0
-_KNN_WEIGHT = 7.0
-
-# 문서 하나의 청크를 이어붙일 때 최대 글자 수 (컨텍스트가 무한정 커지는 것 방지)
-_MAX_DOC_TEXT_CHARS = 4000
 
 
 def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
@@ -172,13 +166,15 @@ def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
     return normalized
 
 
-def _fetch_full_doc_text(es: Elasticsearch, index: str, doc_id: str, max_chars: int = _MAX_DOC_TEXT_CHARS) -> str:
+def _fetch_full_doc_text(es: Elasticsearch, index: str, doc_id: str, max_chars: Optional[int] = None) -> str:
     """
     같은 문서의 청크 하나만 검색에 걸리면, 정작 답이 있는 다른 청크가 컨텍스트에서
     빠질 수 있다 (예: "무엇을 할 수 있는가" 청크 대신 "설치 방법" 청크만 뽑히는 경우).
     검색으로 문서가 한 번 hit하면, 그 문서의 청크를 chunk_index 순으로 이어붙여서
     최대한 그 문서 전체 맥락을 컨텍스트에 포함시킨다.
     """
+    max_chars = max_chars or settings.DOC_CONTEXT_MAX_CHARS
+
     res = es.search(index=index, body={
         "size": 50,
         "_source": ["text"],
@@ -201,7 +197,7 @@ def _fetch_full_doc_text(es: Elasticsearch, index: str, doc_id: str, max_chars: 
 def search_hybrid(
     query_text: str,
     query_vector: Optional[List[float]] = None,
-    top_k: int = 5,
+    top_k: Optional[int] = None,
     space_key: Optional[str] = None,
     index_name: Optional[str] = None
 ) -> List[Dict[str, Any]]:
@@ -214,14 +210,18 @@ def search_hybrid(
     2. Vector kNN 의미 검색: 1536차원 질문 임베딩 벡터(query_vector)와 text_vector의 코사인 유사도 매칭
     3. 점수 결합: BM25와 kNN을 같은 요청에 넣고 raw score를 그냥 더하면 BM25(수십 단위)가
        kNN(0~1)을 압도해서 사실상 BM25 단독 검색이 되어버린다. 그래서 두 쿼리를 따로 실행해
-       chunk_id 기준으로 각각 0~1 min-max 정규화한 뒤 BM25:kNN = 3:2 가중합으로 재랭킹한다.
+       chunk_id 기준으로 각각 0~1 min-max 정규화한 뒤 가중합으로 재랭킹한다.
+       가중치는 settings.HYBRID_BM25_WEIGHT : HYBRID_KNN_WEIGHT (기본 4:6).
        (ES basic 라이선스는 retriever.rrf를 지원하지 않아 RRF 대신 이 방식을 사용)
     """
     target_index = index_name or settings.ELASTICSEARCH_INDEX
+    top_k = top_k or settings.RETRIEVAL_TOP_K
     es = get_es_client()
 
-    # BM25/kNN 각각 top_k보다 넉넉한 후보 풀을 가져와야 재랭킹 시 놓치는 문서가 줄어든다
-    candidate_size = max(top_k * 5, 20)
+    # BM25/kNN이 각각 가져올 후보 청크 수. top_k(최종 문서 수)와는 별개로 넉넉하게 잡는다.
+    # 후보 풀이 좁으면 "한쪽 리스트에는 들었지만 다른 쪽 풀 밖"인 청크가 그쪽 점수 0점으로
+    # 처리돼서, 코사인 유사도 하위권과 아예 안 닮은 청크가 구분되지 않는다.
+    candidate_size = settings.RETRIEVAL_CANDIDATE_SIZE
 
     # 1. BM25 키워드 매칭 쿼리 (제목 가중치 2배 부여)
     bm25_query = {
@@ -269,7 +269,8 @@ def search_hybrid(
     bm25_norm = _normalize_scores(bm25_hits)
     knn_norm = _normalize_scores(knn_hits)
 
-    # 3. chunk_id 기준으로 두 결과를 합치고 3:2 가중합으로 재랭킹
+    # 3. chunk_id 기준으로 두 결과를 합치고 설정된 가중치로 재랭킹.
+    #    한쪽 후보 풀에만 있는 청크는 없는 쪽 점수를 0.0으로 받는다(= 그쪽에서 탈락).
     merged_sources: Dict[str, Dict[str, Any]] = {}
     for hit in bm25_hits + knn_hits:
         chunk_id = hit["_source"].get("chunk_id")
@@ -279,9 +280,9 @@ def search_hybrid(
     scored: List[Dict[str, Any]] = []
     for chunk_id, source in merged_sources.items():
         combined_score = (
-            _BM25_WEIGHT * bm25_norm.get(chunk_id, 0.0)
-            + _KNN_WEIGHT * knn_norm.get(chunk_id, 0.0)
-        ) / (_BM25_WEIGHT + _KNN_WEIGHT)
+            settings.HYBRID_BM25_WEIGHT * bm25_norm.get(chunk_id, 0.0)
+            + settings.HYBRID_KNN_WEIGHT * knn_norm.get(chunk_id, 0.0)
+        ) / (settings.HYBRID_BM25_WEIGHT + settings.HYBRID_KNN_WEIGHT)
         scored.append({
             "chunk_id": source.get("chunk_id"),
             "doc_id": source.get("doc_id"),
@@ -322,7 +323,7 @@ def search_hybrid(
 async def search_hybrid_async(
     query_text: str,
     query_vector: Optional[List[float]] = None,
-    top_k: int = 5,
+    top_k: Optional[int] = None,
     space_key: Optional[str] = None,
     index_name: Optional[str] = None
 ) -> List[Dict[str, Any]]:

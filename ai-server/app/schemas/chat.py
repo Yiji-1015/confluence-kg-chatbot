@@ -35,6 +35,5 @@ class ChatResponse(BaseModel):
     Python AI 서버가 Spring Boot 백엔드로 돌려주는 최종 응답 데이터 모델
     """
     sessionId: str = Field(..., description="대화 세션 식별자")
-    rewrittenQuery: Optional[str] = Field(default=None, description="검색용으로 재작성된 단독 질문 (Stand-alone Query)")
     answer: str = Field(..., description="LLM이 최종 생성한 답변 텍스트")
     sources: List[SourceDocument] = Field(default=[], description="검색에 참고된 Confluence 출처 문서 목록")

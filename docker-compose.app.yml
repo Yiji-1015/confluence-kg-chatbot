@@ -25,7 +25,12 @@ services:
       - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-https://elasticsearch:9200}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-${ELASTIC_PASSWORD:-rag-password}}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-rag-password}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - RETRIEVAL_TOP_K=${RETRIEVAL_TOP_K:-5}
+      - RETRIEVAL_CANDIDATE_SIZE=${RETRIEVAL_CANDIDATE_SIZE:-50}
+      - DOC_CONTEXT_MAX_CHARS=${DOC_CONTEXT_MAX_CHARS:-3000}
+      - HYBRID_BM25_WEIGHT=${HYBRID_BM25_WEIGHT:-4}
+      - HYBRID_KNN_WEIGHT=${HYBRID_KNN_WEIGHT:-6}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
@@ -39,8 +44,6 @@ services:
       - ./ai-server/evaluation:/app/evaluation:ro
       - ./elasticsearch/certs:/app/elasticsearch/certs:ro
       - ./.env:/app/.env:ro
-    depends_on:
-      - redis
     mem_limit: 1g
     restart: on-failure:3
 
