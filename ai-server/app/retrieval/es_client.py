@@ -166,32 +166,60 @@ def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
     return normalized
 
 
-def _fetch_full_doc_text(es: Elasticsearch, index: str, doc_id: str, max_chars: Optional[int] = None) -> str:
+# 문서 하나에서 이어붙일 최대 청크 수 (비정상적으로 긴 문서가 요청을 부풀리는 것 방지)
+_MAX_CHUNKS_PER_DOC = 50
+
+
+def _group_chunk_texts(hits: List[Dict[str, Any]], max_chars: int) -> Dict[str, str]:
+    """
+    doc_id -> chunk_index 순으로 정렬된 hit 목록을 doc_id별 본문 문자열로 묶는 헬퍼.
+    문서마다 따로 max_chars까지만 채우고, 넘으면 그 문서의 남은 청크는 버린다.
+    (ES 왕복 없이 순수 계산만 하므로 파일 하단 셀프체크로 검증 가능하다.)
+    """
+    parts: Dict[str, List[str]] = {}
+    lengths: Dict[str, int] = {}
+
+    for hit in hits:
+        source = hit.get("_source", {})
+        doc_id = source.get("doc_id")
+        if doc_id is None or lengths.get(doc_id, 0) >= max_chars:
+            continue
+        chunk_text = source.get("text", "")
+        parts.setdefault(doc_id, []).append(chunk_text)
+        lengths[doc_id] = lengths.get(doc_id, 0) + len(chunk_text)
+
+    return {doc_id: "\n".join(texts) for doc_id, texts in parts.items()}
+
+
+def _fetch_full_doc_texts(
+    es: Elasticsearch,
+    index: str,
+    doc_ids: List[str],
+    max_chars: Optional[int] = None,
+) -> Dict[str, str]:
     """
     같은 문서의 청크 하나만 검색에 걸리면, 정작 답이 있는 다른 청크가 컨텍스트에서
     빠질 수 있다 (예: "무엇을 할 수 있는가" 청크 대신 "설치 방법" 청크만 뽑히는 경우).
     검색으로 문서가 한 번 hit하면, 그 문서의 청크를 chunk_index 순으로 이어붙여서
     최대한 그 문서 전체 맥락을 컨텍스트에 포함시킨다.
+
+    문서마다 따로 조회하면 top_k에 비례해 왕복이 늘어나므로(N+1), terms 쿼리 하나로
+    한 번에 가져와서 파이썬에서 doc_id별로 나눈다.
     """
+    if not doc_ids:
+        return {}
+
     max_chars = max_chars or settings.DOC_CONTEXT_MAX_CHARS
 
     res = es.search(index=index, body={
-        "size": 50,
-        "_source": ["text"],
-        "query": {"term": {"doc_id": doc_id}},
-        "sort": [{"chunk_index": "asc"}],
+        "size": len(doc_ids) * _MAX_CHUNKS_PER_DOC,
+        "_source": ["doc_id", "text"],
+        "query": {"terms": {"doc_id": doc_ids}},
+        # doc_id로 먼저 묶고 그 안에서 청크 순서를 지켜야 이어붙였을 때 원문 순서가 된다
+        "sort": [{"doc_id": "asc"}, {"chunk_index": "asc"}],
     })
 
-    parts = []
-    total_len = 0
-    for hit in res.get("hits", {}).get("hits", []):
-        chunk_text = hit["_source"].get("text", "")
-        if total_len >= max_chars:
-            break
-        parts.append(chunk_text)
-        total_len += len(chunk_text)
-
-    return "\n".join(parts)
+    return _group_chunk_texts(res.get("hits", {}).get("hits", []), max_chars)
 
 
 def search_hybrid(
@@ -312,12 +340,38 @@ def search_hybrid(
         if len(picked) >= top_k:
             break
 
-    # 5. 뽑힌 문서마다 청크를 이어붙여서, 대표로 매칭된 청크 하나가 아니라
-    #    문서 전체 맥락을 컨텍스트로 채운다.
+    # 5. 뽑힌 문서들의 청크를 한 번에 가져와 이어붙인다. 대표로 매칭된 청크 하나가 아니라
+    #    문서 전체 맥락을 컨텍스트로 채우기 위함이다.
+    doc_texts = _fetch_full_doc_texts(es, target_index, [entry["doc_id"] for entry in picked])
     for entry in picked:
-        entry["text"] = _fetch_full_doc_text(es, target_index, entry["doc_id"])
+        # 조회에 실패한 문서는 매칭된 청크 원문을 그대로 둔다 (컨텍스트가 비는 것보다 낫다)
+        entry["text"] = doc_texts.get(entry["doc_id"]) or entry["text"]
 
     return picked
+
+
+def _self_check() -> None:
+    """ES 없이 검증 가능한 순수 로직 확인. 실행: python -m app.retrieval.es_client"""
+    hits = [
+        {"_source": {"doc_id": "A", "text": "1234567890"}},
+        {"_source": {"doc_id": "A", "text": "abcde"}},      # 여기서 A가 max_chars 도달
+        {"_source": {"doc_id": "A", "text": "버려질청크"}},
+        {"_source": {"doc_id": "B", "text": "짧은문서"}},
+    ]
+    grouped = _group_chunk_texts(hits, max_chars=12)
+    assert grouped["A"] == "1234567890\nabcde", grouped["A"]
+    assert grouped["B"] == "짧은문서", grouped["B"]
+    assert _group_chunk_texts([], 100) == {}
+
+    norm = _normalize_scores([
+        {"_score": 21.0, "_source": {"chunk_id": "a"}},
+        {"_score": 18.2, "_source": {"chunk_id": "b"}},
+        {"_score": 4.1, "_source": {"chunk_id": "c"}},
+    ])
+    assert norm["a"] == 1.0 and norm["c"] == 0.0 and abs(norm["b"] - 0.8343) < 1e-3
+    # 원소가 하나뿐이면 min==max라 0으로 나누지 않고 1.0을 준다
+    assert _normalize_scores([{"_score": 5.0, "_source": {"chunk_id": "x"}}])["x"] == 1.0
+    print("es_client self-check OK")
 
 
 async def search_hybrid_async(
@@ -408,3 +462,7 @@ def get_indexed_updated_ats(doc_ids: List[str], index_name: Optional[str] = None
     except Exception as e:
         print(f"[Elasticsearch Error] 기존 updated_at 조회 실패: {e}")
         return {}
+
+
+if __name__ == "__main__":
+    _self_check()

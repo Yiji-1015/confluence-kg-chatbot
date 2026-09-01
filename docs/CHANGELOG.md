@@ -95,6 +95,17 @@ history는 답변 생성에만 전달되고 검색에는 반영되지 않는다.
   스킵되는 상태였다. `generate_dataset_v2.py`를 정식 이름으로 바꿨다.
 - **`findAllByOrderByUpdatedAtDesc()`**: 세션 목록이 `userId` 필수가 되며 호출부가 사라졌다.
 
+### ES 왕복 N+1 제거
+
+`search_hybrid`가 뽑힌 문서마다 `_fetch_full_doc_text`를 따로 호출해, top_k에 비례해
+왕복이 늘었다(top_k=5 기준 7회: BM25 1 + kNN 1 + 문서 5).
+
+`terms` 쿼리 하나로 합쳐 3회로 줄였다. `doc_id` -> `chunk_index` 순으로 정렬해서
+가져온 뒤 파이썬에서 문서별로 나눈다. 분리 로직은 `_group_chunk_texts()`로 빼서
+ES 없이 검증 가능하게 했다: `python -m app.retrieval.es_client`.
+
+LLM 생성이 1~3초라 체감 지연은 아니었다. 실익은 동시 요청 시 스레드풀 압박 완화다.
+
 ### 내부 예외 문자열 노출 차단
 
 `/internal/chat`이 실패하면 `detail=f"...{str(e)}"`로 예외 원문을 그대로 응답에 실었다.
@@ -102,9 +113,6 @@ Elasticsearch URL이나 자격 힌트가 샐 수 있어 로그에만 남기고 �
 
 ## 남은 과제
 
-- **ES N+1**: `search_hybrid`가 문서마다 `_fetch_full_doc_text`를 따로 호출한다.
-  `top_k=5`면 왕복 7회(BM25 1 + kNN 1 + 문서 5). `terms` 쿼리 하나로 합칠 수 있다.
-  LLM 생성이 1~3초라 체감 지연은 아니지만, 동시 요청 시 스레드풀 압박으로 나타난다.
 - **min-max 정규화의 절벽**: 각 리스트의 꼴찌가 항상 정확히 0.0이라, 후보 풀 마지막
   순위와 풀 밖이 점수상 구분되지 않는다. 정석은 RRF이나 ES basic 라이선스가
   `retriever.rrf`를 지원하지 않는다. 필요해지면 순위 기반으로 직접 구현할 것.
