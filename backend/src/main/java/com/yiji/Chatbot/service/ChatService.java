@@ -8,11 +8,14 @@ import com.yiji.Chatbot.repository.ChatMessageRepository;
 import com.yiji.Chatbot.repository.ChatSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -55,6 +58,7 @@ public class ChatService {
         } else {
             String finalSessionId = sessionId;
             session = chatSessionRepository.findById(sessionId)
+                    .map(found -> requireOwner(found, userId))
                     .orElseGet(() -> {
                         ChatSession newSession = ChatSession.builder()
                                 .id(finalSessionId)
@@ -112,51 +116,51 @@ public class ChatService {
      */
     @Transactional(readOnly = true)
     public List<ChatSessionDto> getSessions(String userId) {
-        List<ChatSession> sessions;
-        if (userId != null && !userId.isBlank()) {
-            sessions = chatSessionRepository.findAllByUserIdOrderByUpdatedAtDesc(userId);
-        } else {
-            sessions = chatSessionRepository.findAllByOrderByUpdatedAtDesc();
-        }
-
-        return sessions.stream()
+        return chatSessionRepository.findAllByUserIdOrderByUpdatedAtDesc(userId).stream()
                 .map(chatMapper::toSessionDto)
                 .collect(Collectors.toList());
     }
 
     /**
-     * 전체 대화방 목록 최신순 조회 (오버로딩)
+     * 특정 대화방의 과거 전체 메시지 내역 조회 (본인 대화방만)
      */
     @Transactional(readOnly = true)
-    public List<ChatSessionDto> getSessions() {
-        return getSessions(null);
-    }
-
-    /**
-     * 특정 대화방의 과거 전체 메시지 내역 조회
-     */
-    @Transactional(readOnly = true)
-    public List<ChatMessageDto> getMessages(String sessionId) {
+    public List<ChatMessageDto> getMessages(String sessionId, String userId) {
+        requireOwnedSession(sessionId, userId);
         return chatMessageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId).stream()
                 .map(chatMapper::toMessageDto)
                 .collect(Collectors.toList());
     }
 
     /**
-     * 대화방 삭제 (Redis 세션 및 RDB 데이터 안전 삭제)
+     * 대화방 삭제 (본인 대화방만, Redis 세션 및 RDB 데이터 안전 삭제)
      */
     @Transactional
-    public void deleteSession(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) {
-            return;
-        }
+    public void deleteSession(String sessionId, String userId) {
+        requireOwnedSession(sessionId, userId);
         redisSessionService.clearSession(sessionId);
-        if (chatSessionRepository.existsById(sessionId)) {
-            chatSessionRepository.deleteById(sessionId);
-            log.info("[ChatService] 대화방 삭제 완료 (sessionId: {})", sessionId);
-        } else {
-            log.warn("[ChatService] 삭제 대상 대화방이 존재하지 않습니다 (sessionId: {})", sessionId);
+        chatSessionRepository.deleteById(sessionId);
+        log.info("[ChatService] 대화방 삭제 완료 (sessionId: {})", sessionId);
+    }
+
+    /**
+     * 대화방을 조회하면서 요청한 사용자의 것인지 확인한다.
+     * userId는 브라우저 localStorage의 익명 ID라 인증은 아니지만,
+     * sessionId만 알면 남의 대화를 읽고 지울 수 있던 구멍은 막는다.
+     */
+    private ChatSession requireOwnedSession(String sessionId, String userId) {
+        return chatSessionRepository.findById(sessionId)
+                .map(session -> requireOwner(session, userId))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "대화방을 찾을 수 없습니다."));
+    }
+
+    private ChatSession requireOwner(ChatSession session, String userId) {
+        if (!Objects.equals(session.getUserId(), userId)) {
+            // 대화방 존재 여부까지 알려주지 않도록 403 대신 404로 응답한다.
+            log.warn("[ChatService] 소유자가 아닌 대화방 접근 차단 (sessionId: {}, userId: {})", session.getId(), userId);
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "대화방을 찾을 수 없습니다.");
         }
+        return session;
     }
 
     /**

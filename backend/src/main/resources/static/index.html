@@ -358,7 +358,7 @@
             chatMessagesEl.innerHTML = '<div class="text-center text-slate-400 text-sm py-10"><i class="fa-solid fa-circle-notch fa-spin"></i> 과거 대화 불러오는 중...</div>';
 
             try {
-                const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages`);
+                const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages?userId=${encodeURIComponent(getUserId())}`);
                 const messages = await res.json();
 
                 chatMessagesEl.innerHTML = '';
@@ -384,7 +384,7 @@
         async function deleteSession(sessionId) {
             if (!confirm('이 대화방을 삭제하시겠습니까? (Redis 및 DB에서 모두 삭제됩니다)')) return;
             try {
-                await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
+                await fetch(`${API_BASE}/sessions/${sessionId}?userId=${encodeURIComponent(getUserId())}`, { method: 'DELETE' });
                 if (currentSessionId === sessionId) {
                     btnNewChatEl.click();
                 }

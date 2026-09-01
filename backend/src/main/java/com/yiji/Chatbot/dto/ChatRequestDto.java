@@ -27,6 +27,7 @@ public class ChatRequestDto {
      * 사용자 식별자 (브라우저 익명 ID 또는 사원 ID)
      * - 사용자별 대화방 목록을 격리하는 데 사용됩니다.
      */
+    @NotBlank(message = "사용자 식별자가 필요합니다.")
     private String userId;
 
     @NotBlank(message = "질문 내용을 입력해주세요.")

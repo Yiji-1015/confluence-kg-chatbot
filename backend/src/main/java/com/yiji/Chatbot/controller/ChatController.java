@@ -38,28 +38,32 @@ public class ChatController {
      * GET /api/sessions?userId={userId}
      */
     @GetMapping("/sessions")
-    public ResponseEntity<List<ChatSessionDto>> getSessions(@RequestParam(name = "userId", required = false) String userId) {
+    public ResponseEntity<List<ChatSessionDto>> getSessions(@RequestParam(name = "userId") String userId) {
         List<ChatSessionDto> sessions = chatService.getSessions(userId);
         return ResponseEntity.ok(sessions);
     }
 
     /**
      * 특정 대화방의 과거 전체 메시지 내역 조회 API
-     * GET /api/sessions/{sessionId}/messages
+     * GET /api/sessions/{sessionId}/messages?userId={userId}
      */
     @GetMapping("/sessions/{sessionId}/messages")
-    public ResponseEntity<List<ChatMessageDto>> getMessages(@PathVariable("sessionId") String sessionId) {
-        List<ChatMessageDto> messages = chatService.getMessages(sessionId);
+    public ResponseEntity<List<ChatMessageDto>> getMessages(
+            @PathVariable("sessionId") String sessionId,
+            @RequestParam(name = "userId") String userId) {
+        List<ChatMessageDto> messages = chatService.getMessages(sessionId, userId);
         return ResponseEntity.ok(messages);
     }
 
     /**
      * 대화방 삭제 API
-     * DELETE /api/sessions/{sessionId}
+     * DELETE /api/sessions/{sessionId}?userId={userId}
      */
     @DeleteMapping("/sessions/{sessionId}")
-    public ResponseEntity<Void> deleteSession(@PathVariable("sessionId") String sessionId) {
-        chatService.deleteSession(sessionId);
+    public ResponseEntity<Void> deleteSession(
+            @PathVariable("sessionId") String sessionId,
+            @RequestParam(name = "userId") String userId) {
+        chatService.deleteSession(sessionId, userId);
         return ResponseEntity.noContent().build();
     }
 }
