@@ -59,8 +59,10 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.0
 
     # 4. Confluence API 연동 설정
-    CONFLUENCE_BASE_URL: str = "https://lloydk.atlassian.net/wiki"
-    CONFLUENCE_SPACE_KEY: str = "LLOYDK"
+    # 기본값에 실제 회사 주소/스페이스를 두지 않는다. 저장소를 클론한 사람이 .env 없이
+    # 남의 Confluence를 찌르게 되기 때문. 실제 값은 .env가 공급한다.
+    CONFLUENCE_BASE_URL: str = "https://your-company.atlassian.net/wiki"
+    CONFLUENCE_SPACE_KEY: str = "SPACE_KEY"
     CONFLUENCE_EMAIL: Optional[str] = None
     CONFLUENCE_API_TOKEN: Optional[str] = None
 

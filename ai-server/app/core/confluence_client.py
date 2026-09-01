@@ -266,7 +266,10 @@ def fetch_pages_with_category(space_key: Optional[str] = None) -> pd.DataFrame:
 
     max_level = df["_title_parts"].apply(len).max()
     for i in range(max_level):
-        df[f"level_{i}"] = df["_title_parts"].apply(lambda parts, i=i: parts[i] if len(parts) > i else None)
+        # 해당 레벨이 없으면 None이 아니라 빈 문자열을 넣는다. None을 넣으면 pandas가 NaN(float)으로
+        # 바꾸고, 그 값이 category 필드로 흘러가 ES 색인 시 JSON 표준에 없는 NaN 토큰으로
+        # 직렬화돼 거부당한다 (2026-09-01 최상위 문서 9건 / 청크 43건 색인 실패로 확인).
+        df[f"level_{i}"] = df["_title_parts"].apply(lambda parts, i=i: parts[i] if len(parts) > i else "")
 
     df = df.drop(columns=["_title_parts"])
     return df

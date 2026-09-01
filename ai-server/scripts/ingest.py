@@ -72,6 +72,7 @@ def ingest(limit: int = None, batch_size: int = 50, category: str = None, force:
 
     print("[3/5] 문서 파싱/청킹 중...")
     all_chunks = []
+    empty_docs = 0
     for page in target_pages:
         parsed = parse_confluence_html(
             page["html_body"],
@@ -91,8 +92,15 @@ def ingest(limit: int = None, batch_size: int = 50, category: str = None, force:
             text=parsed["cleaned_text"],
             metadata=parsed["metadata"],
         )
+        if not chunks:
+            # 본문이 없는 문서(예: Confluence DB 매크로만 있는 페이지)는 청크가 0개다.
+            # ES에 아무것도 안 남으니 다음 색인에서도 계속 대상으로 잡힌다. 정상이지만,
+            # 이 숫자가 갑자기 늘면 파서가 깨진 신호이므로 눈에 보이게 찍어둔다.
+            empty_docs += 1
         all_chunks.extend(chunks)
-    print(f"  -> {len(all_chunks)}개 청크 생성 완료")
+
+    empty_note = f" (본문이 없어 청크 0개인 문서 {empty_docs}개)" if empty_docs else ""
+    print(f"  -> {len(all_chunks)}개 청크 생성 완료{empty_note}")
 
     if not all_chunks:
         print("색인할 청크가 없어 종료합니다.")

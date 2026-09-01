@@ -17,6 +17,7 @@ Langfuse Dataset(confluence-rag-qa-v2)에 대해 실제 RAG 파이프라인(검�
 import os
 import re
 import sys
+from datetime import datetime
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -41,6 +42,23 @@ from app.llm.prompts import build_context_text
 
 DATASET_NAME = "confluence-rag-qa-v2"
 JUDGE_MODEL = "gpt-4o"
+
+
+def _run_name() -> str:
+    """
+    Langfuse의 실행(run) 이름. 이름이 고정이면 목록에서 어떤 설정의 실행인지 구분할 수 없어
+    기억이나 코드 주석에 의존하게 된다. 설정값을 이름에 담아 목록만 봐도 읽히게 한다.
+    끝의 시각은 같은 설정을 여러 번 돌릴 때(재현성 확인) 이름이 겹치지 않게 하기 위함이다.
+    """
+    return (
+        f"qa-bm25_{settings.HYBRID_BM25_WEIGHT:g}"
+        f"-knn_{settings.HYBRID_KNN_WEIGHT:g}"
+        f"-top{settings.RETRIEVAL_TOP_K}"
+        f"-cand{settings.RETRIEVAL_CANDIDATE_SIZE}"
+        f"-chars{settings.DOC_CONTEXT_MAX_CHARS}"
+        f"-temp{settings.LLM_TEMPERATURE:g}"
+        f"-{datetime.now():%m%d-%H%M}"
+    )
 _SCORE_RE = re.compile(r"SCORE:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 _REASON_RE = re.compile(r"REASON:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
@@ -160,7 +178,7 @@ def main():
     dataset = client.get_dataset(DATASET_NAME)
 
     result = dataset.run_experiment(
-        name="confluence-rag-qa",
+        name=_run_name(),
         task=rag_task,
         evaluators=[retrieval_hit_evaluator, faithfulness_evaluator, correctness_evaluator],
     )
