@@ -65,6 +65,9 @@ curl http://localhost:8000/internal/health
 | `OPENAI_API_KEY` | 임베딩 모델 호출 |
 | `DEEPSEEK_API_KEY` | 기본 답변 모델 호출 |
 
+검색·생성 튜닝 변수(`RETRIEVAL_TOP_K`, `HYBRID_*_WEIGHT`, `LLM_TEMPERATURE` 등)는
+`.env.example`의 주석을 참고합니다. 재색인 없이 재시작만으로 반영됩니다.
+
 실제 비밀값은 Git에 커밋하지 않습니다.
 
 ## 디렉터리
