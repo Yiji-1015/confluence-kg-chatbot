@@ -1,5 +1,6 @@
 # 키/시크릿
 .env
+.env.bak*
 *.env.local
 
 # Java
@@ -38,3 +39,4 @@ elasticsearch/certs/
 
 # 연습 및 테스트용 폴더 (Git 제외)
 practice/
+.claude/

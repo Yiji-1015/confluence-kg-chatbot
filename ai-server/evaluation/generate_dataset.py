@@ -10,6 +10,7 @@ GPT-4o를 사용하여 신뢰도 높은 RAG 평가용 골든 데이터셋(v2)을
 4. Multi-turn QA: 이전 대화 참조 멀티턴 질문 (4개)
 """
 import json
+import pprint
 import re
 import sys
 from typing import List, Dict, Any, Optional
@@ -45,6 +46,9 @@ CATEGORY_TARGETS = {
 }
 
 # 고정 Out-of-Domain 문항 (문서 부재 시 정직하게 거절하는지 환각 방지 검증)
+# 주의: 손으로 작성하는 목록이므로 "이런 문서는 없겠지"라는 가정이 틀리면 문항 자체가 오답이 된다.
+# 실제로 주차권 문항(구 qa-v2-ood-04)은 '주차 지원 기준' 문서가 존재해 factoid로 재분류했다.
+# 새 문항을 추가할 때는 반드시 인덱스에서 관련 문서가 없는지 먼저 확인할 것.
 OUT_OF_DOMAIN_ITEMS = [
     {
         "id": "qa-v2-ood-01",
@@ -62,12 +66,6 @@ OUT_OF_DOMAIN_ITEMS = [
         "id": "qa-v2-ood-03",
         "input": "사내 동호회 신설 기준과 매월 지원금 신청 절차를 알려줘.",
         "expected_output": "사내 Confluence 문서에 동호회 지원금이나 신설 기준 관련 내용이 없습니다.",
-        "metadata": {"type": "out_of_domain", "expected_doc_ids": [], "category": "out-of-domain"}
-    },
-    {
-        "id": "qa-v2-ood-04",
-        "input": "사옥 지하 주차장 1일 방문 차량 무료 주차권은 어디서 받아?",
-        "expected_output": "사내 Confluence 문서에 주차권 발급 관련 안내가 등록되어 있지 않습니다.",
         "metadata": {"type": "out_of_domain", "expected_doc_ids": [], "category": "out-of-domain"}
     },
     {
@@ -239,9 +237,11 @@ Langfuse QA 데이터셋 v2 정의 (confluence-rag-qa-v2).
 
 QA_DATASET_ITEMS = '''
 
+    # 파이썬 모듈로 import되는 파일이므로 JSON이 아니라 파이썬 리터럴로 써야 한다.
+    # json.dumps는 True를 true로 쓰기 때문에(known_gap 필드) import 시 NameError가 난다.
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(header)
-        f.write(json.dumps(dataset_items, ensure_ascii=False, indent=4))
+        f.write(pprint.pformat(dataset_items, indent=4, width=120, sort_dicts=False))
         f.write("\n")
 
     print(f"💾 {output_path} 파일에 v2 데이터셋 저장 완료!")

@@ -14,6 +14,8 @@ Langfuse Dataset(confluence-rag-qa-v2)에 대해 실제 RAG 파이프라인(검�
 실행:
     cd ai-server && .venv/bin/python -m evaluation.run_qa
 """
+import asyncio
+import concurrent.futures
 import os
 import re
 import sys
@@ -41,7 +43,7 @@ from app.llm.model_router import select_optimal_model
 from app.llm.prompts import build_context_text
 
 DATASET_NAME = "confluence-rag-qa-v2"
-JUDGE_MODEL = "gpt-4o"
+JUDGE_MODEL = settings.JUDGE_MODEL
 
 
 def _run_name() -> str:
@@ -57,6 +59,7 @@ def _run_name() -> str:
         f"-cand{settings.RETRIEVAL_CANDIDATE_SIZE}"
         f"-chars{settings.DOC_CONTEXT_MAX_CHARS}"
         f"-temp{settings.LLM_TEMPERATURE:g}"
+        f"-judge_{settings.JUDGE_MODEL}"
         f"-{datetime.now():%m%d-%H%M}"
     )
 _SCORE_RE = re.compile(r"SCORE:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
@@ -92,16 +95,38 @@ def rag_task(*, item, **kwargs):
         "answer": answer,
         "retrieved_doc_ids": retrieved_doc_ids,
         "context": context_text,
+        # RAGAS는 합쳐진 문자열이 아니라 문서 단위 리스트를 받는다
+        "retrieved_contexts": [r.get("text", "") for r in results],
     }
 
 
+def _scorable_expected_ids(metadata):
+    """
+    검색 지표(hit/MRR)로 채점할 문항인지 판단하고, 맞다면 기대 문서 id를 돌려준다.
+
+    - known_gap: 겨냥한 문서가 본문 없이 청크 0개라 ES에 존재하지 않는다. 검색이 못 찾는 게
+      정상이므로 채점하면 구조적으로 0점이 되어 지표를 왜곡한다 (이 문항의 목적은
+      correctness로 "링크 안내로 답하는가"를 보는 것).
+    - out_of_domain: 기대 문서 자체가 없다.
+    """
+    meta = metadata or {}
+    if meta.get("known_gap"):
+        return None
+    return meta.get("expected_doc_ids") or None
+
+
+def _retrieved_ids(output):
+    return output.get("retrieved_doc_ids", []) if isinstance(output, dict) else []
+
+
 def retrieval_hit_evaluator(*, input, output, expected_output=None, metadata=None, **kwargs):
-    expected_ids = (metadata or {}).get("expected_doc_ids")
+    meta = metadata or {}
+
+    expected_ids = _scorable_expected_ids(meta)
     if not expected_ids:
-        # out-of-domain 문항(기대 문서 없음)은 hit 채점 대상이 아님 (None 반환 시 점수 자체를 안 남김)
         return None
 
-    retrieved = output.get("retrieved_doc_ids", []) if isinstance(output, dict) else []
+    retrieved = _retrieved_ids(output)
     hit = any(doc_id in retrieved for doc_id in expected_ids)
     return Evaluation(
         name="retrieval_hit",
@@ -109,6 +134,121 @@ def retrieval_hit_evaluator(*, input, output, expected_output=None, metadata=Non
         data_type="BOOLEAN",
         comment=f"expected={expected_ids} retrieved={retrieved}",
     )
+
+
+def retrieval_mrr_evaluator(*, input, output, expected_output=None, metadata=None, **kwargs):
+    """
+    정답 문서가 "몇 번째로" 검색됐는지를 점수화한다 (1등 1.0 / 2등 0.5 / 3등 0.33 / 못 찾음 0).
+
+    retrieval_hit은 상위 top_k 안에 있기만 하면 1점이라, 정답이 1등이든 5등이든 구분하지
+    못한다. 실제로 결합 방식을 바꿔가며 재보면 hit은 전부 같은데 MRR은 갈렸다
+    (2026-09-01 실측: min-max 0.908 vs RRF 0.934, hit은 양쪽 0.974로 동일).
+    컨텍스트는 점수 순으로 이어 붙으므로 앞 순위일수록 답변에 강하게 작용한다.
+    """
+    expected_ids = _scorable_expected_ids(metadata)
+    if not expected_ids:
+        return None
+
+    retrieved = _retrieved_ids(output)
+    rank = next((i for i, doc_id in enumerate(retrieved, start=1) if doc_id in expected_ids), None)
+    return Evaluation(
+        name="retrieval_mrr",
+        value=1.0 / rank if rank else 0.0,
+        comment=f"rank={rank or 'miss'} expected={expected_ids} retrieved={retrieved}",
+    )
+
+
+_RAGAS = {}
+
+
+def _ragas_metrics():
+    """
+    RAGAS 지표를 지연 생성한다. 미설치면 빈 dict를 돌려주고 나머지 지표로 계속 진행한다.
+    (ragas는 langchain/langgraph/datasets를 통째로 끌고 오므로 서빙 이미지에 넣지 않고
+     requirements-eval.txt로 분리했다.)
+
+    판정 LLM은 직접 구현한 지표와 동일하게 LiteLLM 게이트웨이의 JUDGE_MODEL을 쓴다.
+    같은 모델로 채점해야 두 지표를 공정하게 비교할 수 있다.
+    """
+    if "loaded" in _RAGAS:
+        return _RAGAS
+    _RAGAS["loaded"] = True
+    try:
+        from openai import AsyncOpenAI
+        from ragas.llms import llm_factory
+        from ragas.metrics.collections import ContextPrecisionWithoutReference, Faithfulness
+
+        client = AsyncOpenAI(base_url=f"{settings.LITELLM_BASE_URL}/v1", api_key="litellm-local")
+        judge = llm_factory(model=settings.JUDGE_MODEL, provider="openai", client=client)
+        _RAGAS["faithfulness"] = Faithfulness(llm=judge)
+        _RAGAS["context_precision"] = ContextPrecisionWithoutReference(llm=judge)
+        print(f"[RAGAS] 지표 활성화 (판정 모델: {settings.JUDGE_MODEL})")
+    except ImportError:
+        print("[RAGAS] 미설치 - 건너뜁니다. 쓰려면: pip install -r requirements-eval.txt")
+    return _RAGAS
+
+
+def _ragas_score(key: str, output):
+    """RAGAS 지표 하나를 채점해 0~1 값을 돌려준다. 실패 시 None (해당 문항만 건너뜀)."""
+    metric = _ragas_metrics().get(key)
+    if metric is None or not isinstance(output, dict):
+        return None
+
+    contexts = output.get("retrieved_contexts") or []
+    if not contexts:
+        return None
+
+    def call():
+        return asyncio.run(metric.ascore(
+            user_input=output.get("question", ""),
+            response=output.get("answer", ""),
+            retrieved_contexts=contexts,
+        ))
+
+    try:
+        # Langfuse는 평가기를 이벤트 루프 안에서 실행하므로 asyncio.run()이 거부된다.
+        # 루프가 이미 돌고 있으면 별도 스레드에서 새 루프를 열어 실행한다.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            result = call()
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(call).result()
+        return float(result.value)
+    except Exception as exc:
+        print(f"[RAGAS] {key} 채점 실패: {type(exc).__name__}: {str(exc)[:120]}")
+        return None
+
+
+def ragas_faithfulness_evaluator(*, input, output, expected_output=None, metadata=None, **kwargs):
+    """
+    RAGAS 표준 faithfulness. 직접 구현한 answer_faithfulness와 나란히 기록해서,
+    자체 판정 기준이 표준 지표와 어긋나지 않는지 교차 검증한다.
+    """
+    if isinstance(output, dict):
+        output.setdefault("question", input)
+    value = _ragas_score("faithfulness", output)
+    if value is None:
+        return None
+    return Evaluation(name="ragas_faithfulness", value=value)
+
+
+def ragas_context_precision_evaluator(*, input, output, expected_output=None, metadata=None, **kwargs):
+    """
+    검색된 문서들이 실제로 답변에 쓸모 있었는지를 순위 가중으로 채점한다 (정답 라벨 불필요).
+
+    retrieval_hit/MRR은 "정답으로 라벨링한 문서 1개"만 보기 때문에, 함께 딸려온
+    나머지 문서들의 품질을 전혀 못 본다. 실제로 결합 방식을 바꾸면 상위 5개 구성이
+    38건 중 33건에서 달라지는데도 hit은 동일했다 (2026-09-01 실측).
+    이 지표가 그 사각지대를 메운다.
+    """
+    if isinstance(output, dict):
+        output.setdefault("question", input)
+    value = _ragas_score("context_precision", output)
+    if value is None:
+        return None
+    return Evaluation(name="ragas_context_precision", value=value)
 
 
 def faithfulness_evaluator(*, input, output, expected_output=None, metadata=None, **kwargs):
@@ -180,7 +320,9 @@ def main():
     result = dataset.run_experiment(
         name=_run_name(),
         task=rag_task,
-        evaluators=[retrieval_hit_evaluator, faithfulness_evaluator, correctness_evaluator],
+        evaluators=[retrieval_hit_evaluator, retrieval_mrr_evaluator,
+                    faithfulness_evaluator, correctness_evaluator,
+                    ragas_faithfulness_evaluator, ragas_context_precision_evaluator],
     )
 
     print(result.format())

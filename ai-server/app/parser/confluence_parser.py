@@ -1,4 +1,6 @@
 import os
+import re
+from datetime import date
 from bs4 import BeautifulSoup, Tag
 from typing import Dict, Any, List
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -7,6 +9,52 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Confluence storage HTML에만 존재하는 매크로/메타 태그. 본문 텍스트로 뽑히면 그대로
 # 노이즈가 되므로 파싱 시작 단계에서 통째로 제거한다.
 _NOISE_TAGS = ["ac:parameter", "ac:schema-version", "ac:macro-id", "ri:url", "script", "style"]
+
+
+# 제목에 쓰이는 날짜 표기들. 실제 인덱스 제목 563건을 훑어 확인한 세 가지 형태다
+# (YYYYMMDD 147건 / YY.MM.DD 15건 / YYYY년 M월 D일 6건).
+_DATE_PATTERNS = [
+    re.compile(r"(?<!\d)(20\d{2})[.\-/]?(0[1-9]|1[0-2])[.\-/]?(0[1-9]|[12]\d|3[01])(?!\d)"),
+    re.compile(r"(?<!\d)(20\d{2}|\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일"),
+    re.compile(r"(?<!\d)([2-3]\d)[.\-](\d{1,2})[.\-](\d{1,2})(?!\d)"),
+]
+
+
+def expand_title_dates(title: str) -> str:
+    """
+    제목에 있는 날짜를 여러 표기로 펼친 문자열을 만든다 (검색 전용 필드에 넣기 위함).
+
+    Nori는 "20260303"을 토큰 하나로 자르기 때문에, 질문의 "2026년 3월 3일"
+    (-> 2026 / 년 / 3 / 월 / 3 / 일)과 단 한 토큰도 겹치지 않는다. 그 결과 회의록처럼
+    제목 형식이 같고 날짜만 다른 문서들 사이에서 날짜가 BM25 점수에 전혀 기여하지 못하고,
+    심지어 날짜가 다른 문서가 정답보다 높은 점수를 받는다 (2026-09-01 실측).
+
+    색인 시점에 표기를 펼쳐두면 질의 시점에 질문을 파싱할 필요가 없다.
+
+    >>> expand_title_dates("20260303_주간미팅_솔루션")
+    '20260303 2026-03-03 2026년 3월 3일 26년 3월 3일'
+    """
+    found: List[tuple] = []
+    for pattern in _DATE_PATTERNS:
+        for match in pattern.finditer(title or ""):
+            year, month, day = (int(g) for g in match.groups())
+            if year < 100:
+                year += 2000
+            try:
+                date(year, month, day)  # 13월 32일 같은 오탐 제거
+            except ValueError:
+                continue
+            found.append((year, month, day))
+
+    variants: List[str] = []
+    for year, month, day in dict.fromkeys(found):  # 중복 제거, 등장 순서 유지
+        variants += [
+            f"{year}{month:02d}{day:02d}",
+            f"{year}-{month:02d}-{day:02d}",
+            f"{year}년 {month}월 {day}일",
+            f"{year % 100:02d}년 {month}월 {day}일",
+        ]
+    return " ".join(dict.fromkeys(variants))
 
 
 def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -218,3 +266,22 @@ def _table_records_to_markdown(records: List[Dict[str, str]]) -> str:
         lines.append("| " + " | ".join(row_values) + " |")
 
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    # 실행: docker exec rag-ai-server python -m app.parser.confluence_parser
+    # 실제 인덱스에 있던 제목 형태들로 검증한다.
+    assert expand_title_dates("20260303_주간미팅_솔루션 test").split() == [
+        "20260303", "2026-03-03", "2026년", "3월", "3일", "26년", "3월", "3일"
+    ]
+    assert "2025-10-24" in expand_title_dates("25.10.24 업무 범위 협의")
+    assert "20260331" in expand_title_dates("[회의록] 26년 03월 31일")
+    assert "20260828" in expand_title_dates("AI/LLM 주간 브리핑 (2026-08-28)")
+    # 날짜가 두 개면 둘 다 펼친다
+    assert expand_title_dates("주간 업무 보고서: 2026년 3월 23일 ~ 3월 27일").count("2026년") >= 1
+    # 날짜가 없으면 빈 문자열
+    assert expand_title_dates("주차 지원 기준") == ""
+    assert expand_title_dates("") == ""
+    # 13월 32일 같은 오탐은 버린다
+    assert expand_title_dates("20261332_회의") == ""
+    print("confluence_parser self-check OK")

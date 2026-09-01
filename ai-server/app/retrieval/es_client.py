@@ -2,6 +2,7 @@ import asyncio
 from elasticsearch import Elasticsearch, helpers
 from typing import List, Dict, Any, Optional
 from app.config import settings
+from app.parser.confluence_parser import expand_title_dates
 
 
 def get_es_client() -> Elasticsearch:
@@ -36,8 +37,14 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
     es = get_es_client()
 
     try:
-        # 인덱스가 이미 존재할 경우 무분별한 재생성을 방지하고 통과
+        # 인덱스가 이미 존재하면 재생성하지 않되, 나중에 추가된 필드는 매핑에 더해준다.
+        # 그냥 두면 dynamic mapping이 nori가 아닌 기본 분석기로 잡아버려 한국어가 안 걸린다.
         if es.indices.exists(index=target_index):
+            es.indices.put_mapping(index=target_index, body={
+                "properties": {
+                    "title_search": {"type": "text", "analyzer": "nori_analyzer"},
+                }
+            })
             return True
 
         # Nori 형태소 분석기 및 1536차원 벡터 필드 매핑 정의 (ELASTICSEARCH.md 준수)
@@ -57,6 +64,8 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                     "chunk_id": {"type": "keyword"},  # Elasticsearch _id로 사용되는 고유 청크 키
                     "doc_id": {"type": "keyword"},    # 원본 Confluence 문서 ID (삭제 동기화용)
                     "title": {"type": "text", "analyzer": "nori_analyzer"},  # 문서 제목 (BM25 키워드 검색)
+                    # 제목의 날짜를 여러 표기로 펼쳐 담는 검색 전용 필드. 표시용 title은 원본을 유지한다.
+                    "title_search": {"type": "text", "analyzer": "nori_analyzer"},
                     "text": {"type": "text", "analyzer": "nori_analyzer"},   # 청크 본문 (BM25 키워드 검색)
                     "space_key": {"type": "keyword"}, # Confluence Space 식별자
                     "author": {"type": "keyword"},   # 작성자 메타데이터
@@ -109,6 +118,7 @@ def index_document_chunks(
             "chunk_id": chunk["chunk_id"],
             "doc_id": chunk["doc_id"],
             "title": chunk["title"],
+            "title_search": expand_title_dates(chunk["title"]),
             "text": chunk["text"],
             "space_key": chunk.get("metadata", {}).get("space_key", settings.CONFLUENCE_SPACE_KEY),
             "author": chunk.get("metadata", {}).get("author", "Unknown"),
@@ -170,6 +180,7 @@ def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
 # 딸려와서, 후보 100청크 기준 요청당 수 MB를 전송·파싱하고 그대로 버리게 된다.
 _SEARCH_SOURCE_FIELDS = [
     "chunk_id", "doc_id", "title", "text", "url", "author", "category", "path", "space_key",
+    "updated_at",  # 최신 문서 가산점(RECENCY_BOOST_MAX) 계산용
 ]
 
 # 문서 하나에서 이어붙일 최대 청크 수 (비정상적으로 긴 문서가 요청을 부풀리는 것 방지)
@@ -228,6 +239,34 @@ def _fetch_full_doc_texts(
     return _group_chunk_texts(res.get("hits", {}).get("hits", []), max_chars)
 
 
+_RECENCY_BUCKETS = 5
+
+
+def _apply_recency_bonus(scored: List[Dict[str, Any]], max_bonus: float,
+                         buckets: int = _RECENCY_BUCKETS) -> None:
+    """
+    후보들을 updated_at 기준 최신순으로 5등분해, 최신 그룹부터 max_bonus~0을 균등 배분해
+    score에 더한다 (제자리 수정). max_bonus=0.04면 0.04 / 0.03 / 0.02 / 0.01 / 0.
+
+    절대 시각이 아니라 후보 풀 내 상대 순위로 나눈다. 그래서 후보가 전부 같은 주에
+    작성됐어도 가산점 폭은 그대로 벌어진다 — 이 부작용을 감수할 값인지는 측정으로 판단한다.
+    updated_at은 Confluence 최종 수정 시각이라 "문서 내용의 날짜"와 다르다는 점도 유의.
+    """
+    if max_bonus <= 0 or not scored:
+        return
+
+    dated = [e for e in scored if e.get("updated_at")]
+    if len(dated) < buckets:
+        return  # 후보가 그룹 수보다 적으면 나누는 의미가 없다
+
+    dated.sort(key=lambda e: e["updated_at"], reverse=True)  # ISO-8601은 사전순 = 시간순
+    step = max_bonus / (buckets - 1)
+    size = -(-len(dated) // buckets)  # 올림 나눗셈
+    for rank, entry in enumerate(dated):
+        bucket = min(rank // size, buckets - 1)
+        entry["score"] += (buckets - 1 - bucket) * step
+
+
 def search_hybrid(
     query_text: str,
     query_vector: Optional[List[float]] = None,
@@ -264,7 +303,9 @@ def search_hybrid(
                 {
                     "multi_match": {
                         "query": query_text,
-                        "fields": ["title^2.0", "text"], # 제목(title) 매칭 시 점수 2배 가산
+                        # title_search는 날짜 표기 변형만 담고 있어 title과 토큰이 겹치지 않는다.
+                        # 따라서 제목 가중치가 이중 계상되지 않는다.
+                        "fields": ["title^2.0", "title_search^2.0", "text"],
                         "type": "best_fields"
                     }
                 }
@@ -335,9 +376,11 @@ def search_hybrid(
             "category": source.get("category"),
             "path": source.get("path"),
             "space_key": source.get("space_key"),
+            "updated_at": source.get("updated_at"),
             "score": combined_score
         })
 
+    _apply_recency_bonus(scored, settings.RECENCY_BOOST_MAX)
     scored.sort(key=lambda x: x["score"], reverse=True)
 
     # 4. top_k "청크"가 아니라 top_k "서로 다른 문서"를 뽑는다. 같은 문서의 청크 여러 개가
@@ -376,6 +419,18 @@ def _self_check() -> None:
     assert grouped["A"] == "1234567890\nabcde", grouped["A"]
     assert grouped["B"] == "짧은문서", grouped["B"]
     assert _group_chunk_texts([], 100) == {}
+
+    # 최신 가산점: 5분위로 0.04/0.03/0.02/0.01/0 (동점 근처만 흔들도록 작게)
+    pool = [{"score": 0.5, "updated_at": f"2026-0{i}-01T00:00:00.000Z"} for i in range(1, 6)]
+    _apply_recency_bonus(pool, 0.04)
+    got = [round(e["score"] - 0.5, 3) for e in pool]
+    assert got == [0.0, 0.01, 0.02, 0.03, 0.04], got          # 오래된 것 -> 최신 순
+    off = [{"score": 0.5, "updated_at": "2026-01-01"} for _ in range(5)]
+    _apply_recency_bonus(off, 0.0)
+    assert all(e["score"] == 0.5 for e in off)                # 0이면 아무것도 안 함
+    few = [{"score": 0.5, "updated_at": "2026-01-01"} for _ in range(3)]
+    _apply_recency_bonus(few, 0.04)
+    assert all(e["score"] == 0.5 for e in few)                # 후보가 그룹 수보다 적으면 건너뜀
 
     norm = _normalize_scores([
         {"_score": 21.0, "_source": {"chunk_id": "a"}},

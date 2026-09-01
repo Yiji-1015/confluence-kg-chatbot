@@ -53,10 +53,20 @@ class Settings(BaseSettings):
     HYBRID_BM25_WEIGHT: float = 4.0
     HYBRID_KNN_WEIGHT: float = 6.0
 
+    # 최신 문서 가산점. 후보를 updated_at 기준 5분위로 묶어 최신 그룹부터
+    # RECENCY_BOOST_MAX ~ 0 을 균등 배분해 결합 점수에 더한다 (0.04면 0.04/0.03/0.02/0.01/0).
+    # 관련도를 뒤집지 않고 동점 근처만 흔들 만큼 작게 두는 것이 의도다.
+    # 0.0이면 완전히 끈다. 켤지 말지는 run_qa의 retrieval_hit으로 판단할 것.
+    RECENCY_BOOST_MAX: float = 0.0
+
     # 답변 생성 temperature. 미지정 시 OpenAI/DeepSeek 기본값은 0(결정적)이 아니라 1.0이라,
     # 같은 질문·같은 컨텍스트에도 답이 매번 달라져 평가 점수가 흔들린다.
     # RAG는 컨텍스트 충실도가 목적이므로 0으로 고정한다.
     LLM_TEMPERATURE: float = 0.0
+
+    # 평가 채점(LLM-as-a-Judge) 전용 모델. 답변 생성 모델과 반드시 다른 계열로 둔다.
+    # 같은 모델이 자기 출력을 채점하면 self-preference bias로 점수가 후해진다.
+    JUDGE_MODEL: str = "solar-judge"
 
     # 4. Confluence API 연동 설정
     # 기본값에 실제 회사 주소/스페이스를 두지 않는다. 저장소를 클론한 사람이 .env 없이

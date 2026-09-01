@@ -19,6 +19,15 @@ model_list:
       model: openai/gpt-4o
       api_key: os.environ/OPENAI_API_KEY
 
+  # 평가 전용 판정 모델 (Upstage). 답변 생성 모델과 다른 계열을 써서
+  # 같은 모델이 자기 답을 채점하는 self-preference bias를 제거한다.
+  # Upstage는 OpenAI 호환 API라 openai/ 프리픽스 + api_base로 붙인다.
+  - model_name: solar-judge
+    litellm_params:
+      model: openai/solar-pro4
+      api_base: https://api.upstage.ai/v1
+      api_key: os.environ/UPSTAGE_API_KEY
+
   # 임베딩은 폴백하지 않음 — 벡터 공간이 달라지면 재색인이 필요 (PLAN §5)
   - model_name: embedding-openai
     litellm_params:
@@ -30,6 +39,8 @@ router_settings:
   fallbacks:
     - deepseek-chat: ["gpt-4o-mini"]   # DeepSeek API 장애 시 GPT-4o-mini로 자동 폴백
     - gpt-4o: ["deepseek-chat"]        # GPT-4o 장애 시 DeepSeek으로 자동 폴백
+  # solar-judge는 의도적으로 폴백을 두지 않는다. 판정자가 조용히 gpt-4o로 넘어가면
+  # 생성 모델이 자기 답을 채점하게 되어, 분리해둔 의미가 사라진다. 차라리 실패시킨다.
 
 # Phase 3: Langfuse 실시간 옵저버빌리티/트레이싱 자동 전송
 litellm_settings:

@@ -1,0 +1,13 @@
+# 평가 전용 의존성. 서빙에는 필요 없어서 requirements.txt와 분리했다.
+# ragas는 langchain / langgraph / datasets 등 50개+ 패키지를 끌고 오므로
+# 이걸 서빙 이미지에 넣으면 런타임이 불필요하게 무거워진다.
+#
+# 설치:  docker exec rag-ai-server pip install -r /app/evaluation/../requirements-eval.txt
+#   또는 로컬:  pip install -r ai-server/requirements-eval.txt
+
+ragas==0.4.3
+
+# ragas 0.4.3이 langchain-community를 버전 제한 없이 선언하는데,
+# 0.4.x에서 제거된 langchain_community.chat_models.vertexai를 참조해 import가 깨진다.
+# 0.3.x로 고정해야 동작한다 (langchain-core는 건드리지 않음).
+langchain-community<0.4
