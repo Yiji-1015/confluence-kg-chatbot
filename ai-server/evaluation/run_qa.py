@@ -58,6 +58,7 @@ def _run_name() -> str:
         f"-top{settings.RETRIEVAL_TOP_K}"
         f"-cand{settings.RETRIEVAL_CANDIDATE_SIZE}"
         f"-chars{settings.DOC_CONTEXT_MAX_CHARS}"
+        f"-recency{settings.RECENCY_BOOST_MAX:g}"
         f"-temp{settings.LLM_TEMPERATURE:g}"
         f"-judge_{settings.JUDGE_MODEL}"
         f"-{datetime.now():%m%d-%H%M}"
