@@ -72,7 +72,6 @@
 
 ## 다음 단계
 
-- `RETRIEVAL_TOP_K` 3 vs 5 비교 (context_precision 0.835는 약 16%가 불필요했음을 시사)
 - RRF 채택 여부를 답변 품질 지표로 확정
 - Query Rewrite 도입 — 멀티턴 검색이 깨지는 근본 원인
 - 실제 사용자 질문 데이터셋 확대
