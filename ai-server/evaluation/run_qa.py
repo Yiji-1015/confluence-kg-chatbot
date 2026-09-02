@@ -166,8 +166,8 @@ def retrieval_mrr_evaluator(*, input, output, expected_output=None, metadata=Non
     정답 문서가 "몇 번째로" 검색됐는지를 점수화한다 (1등 1.0 / 2등 0.5 / 3등 0.33 / 못 찾음 0).
 
     retrieval_hit은 상위 top_k 안에 있기만 하면 1점이라, 정답이 1등이든 5등이든 구분하지
-    못한다. 실제로 결합 방식을 바꿔가며 재보면 hit은 전부 같은데 MRR은 갈렸다
-    (2026-09-01 실측: min-max 0.908 vs RRF 0.934, hit은 양쪽 0.974로 동일).
+    못한다. 실제로 결합 방식을 바꿔가며 재보면 hit은 전부 같은데 MRR만 갈렸다
+    (2026-09-01 실측: hit은 세 방식 모두 0.974, MRR은 0.890~0.908).
     컨텍스트는 점수 순으로 이어 붙으므로 앞 순위일수록 답변에 강하게 작용한다.
     """
     expected_ids = _scorable_expected_ids(metadata)
