@@ -15,6 +15,7 @@ Langfuse Dataset(confluence-rag-qa-v2)에 대해 실제 RAG 파이프라인(검�
     cd ai-server && .venv/bin/python -m evaluation.run_qa
 """
 import asyncio
+import collections
 import concurrent.futures
 import os
 import re
@@ -65,6 +66,24 @@ def _run_name() -> str:
     )
 _SCORE_RE = re.compile(r"SCORE:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 _REASON_RE = re.compile(r"REASON:\s*(.+)", re.IGNORECASE | re.DOTALL)
+
+
+# 채점 실패 집계. 실패하면 그 문항은 점수를 안 남기고 평균에서 조용히 빠지므로,
+# 몇 건이 빠졌는지 끝에 반드시 찍어야 결과를 믿을 수 있는지 판단할 수 있다.
+_FAILURES = collections.Counter()
+
+
+def _judge(prompt: str, metric: str):
+    """판정 모델을 호출하고 점수를 파싱한다. 실패 시 (None, 사유)를 돌려주고 집계한다."""
+    try:
+        raw = generate_chat_completion([{"role": "user", "content": prompt}], model=JUDGE_MODEL)
+    except Exception as exc:
+        _FAILURES[f"{metric}: 호출 실패({type(exc).__name__})"] += 1
+        return None, None
+    score, reason = _parse_judge_response(raw)
+    if score is None:
+        _FAILURES[f"{metric}: 형식 파싱 실패"] += 1
+    return score, reason
 
 
 def _parse_judge_response(raw: str):
@@ -218,7 +237,7 @@ def _ragas_score(key: str, output):
                 result = pool.submit(call).result()
         return float(result.value)
     except Exception as exc:
-        print(f"[RAGAS] {key} 채점 실패: {type(exc).__name__}: {str(exc)[:120]}")
+        _FAILURES[f"ragas_{key}: {type(exc).__name__}"] += 1
         return None
 
 
@@ -264,8 +283,7 @@ def faithfulness_evaluator(*, input, output, expected_output=None, metadata=None
         "0.0(전혀 근거 없음) ~ 1.0(완전히 근거함) 사이 점수를 아래 형식으로만 출력하세요:\n"
         "SCORE: <숫자>\nREASON: <한 줄 이유>"
     )
-    raw = generate_chat_completion([{"role": "user", "content": judge_prompt}], model=JUDGE_MODEL)
-    score, reason = _parse_judge_response(raw)
+    score, reason = _judge(judge_prompt, "answer_faithfulness")
     if score is None:
         return None
     return Evaluation(name="answer_faithfulness", value=score, comment=reason)
@@ -283,11 +301,25 @@ def correctness_evaluator(*, input, output, expected_output=None, metadata=None,
         "0.0(완전히 틀림) ~ 1.0(정확히 일치) 사이 점수를 아래 형식으로만 출력하세요:\n"
         "SCORE: <숫자>\nREASON: <한 줄 이유>"
     )
-    raw = generate_chat_completion([{"role": "user", "content": judge_prompt}], model=JUDGE_MODEL)
-    score, reason = _parse_judge_response(raw)
+    score, reason = _judge(judge_prompt, "answer_correctness")
     if score is None:
         return None
     return Evaluation(name="answer_correctness", value=score, comment=reason)
+
+
+def _print_warnings():
+    """채점에서 빠진 문항이 있으면 크게 알린다. 평균만 보면 알 수 없기 때문이다."""
+    if not _FAILURES:
+        print("\n채점 누락 없음 - 모든 문항이 정상 채점됐습니다.")
+        return
+
+    total = sum(_FAILURES.values())
+    print("\n" + "!" * 60)
+    print(f"경고: 채점 실패 {total}건. 해당 문항은 평균 계산에서 빠졌으므로")
+    print("      이 실행의 점수를 다른 실행과 비교하면 안 됩니다.")
+    for reason, count in _FAILURES.most_common():
+        print(f"  - {reason}: {count}건")
+    print("!" * 60)
 
 
 def _print_diagnosis(item_results):
@@ -327,6 +359,7 @@ def main():
     )
 
     print(result.format())
+    _print_warnings()
     _print_diagnosis(result.item_results)
 
     if result.dataset_run_url:

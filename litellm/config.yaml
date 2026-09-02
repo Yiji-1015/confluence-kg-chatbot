@@ -36,6 +36,15 @@ model_list:
 
 # Phase 3: LLM 게이트웨이 Fallback 라우팅 규칙
 router_settings:
+  # 429(rate limit)를 게이트웨이에서 재시도한다. 평가는 판정 모델을 짧은 시간에
+  # 몰아서 호출하기 때문에(자체 판정기 2종 + RAGAS 병렬 호출) 한도를 넘기기 쉽고,
+  # 재시도가 없으면 그 문항이 조용히 채점에서 빠져 평균이 왜곡된다
+  # (2026-09-02 실측: 429 5건으로 45문항 중 5문항 누락).
+  num_retries: 3
+  retry_after: 5
+  allowed_fails: 10
+  cooldown_time: 30
+
   fallbacks:
     - deepseek-chat: ["gpt-4o-mini"]   # DeepSeek API 장애 시 GPT-4o-mini로 자동 폴백
     - gpt-4o: ["deepseek-chat"]        # GPT-4o 장애 시 DeepSeek으로 자동 폴백
