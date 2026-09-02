@@ -106,12 +106,7 @@ Prometheus의 `up{job="backend"}`으로 상태를 본다.
 파일 쓰기도 실패한다. 아래 작업은 디스크 정리가 선행되어야 한다.
 
 1. **디스크 정리** — `docker system df`로 확인 후 `docker image prune` 등
-2. **Grafana 대시보드 JSON 5개 작성** → `monitoring/grafana/dashboards/`
-   - `01-overview` 전체 상태·처리량·에러율·p50/p95/p99·계층별 지연 분해·컨테이너 자원
-   - `02-application` API별 지연/요청/에러, RAG 단계별 실패, JVM 힙·GC·스레드
-   - `03-data-middleware` HikariCP 풀·획득 시간, 캐시 적중률, ES 검색 지연, 검색 0건 비율
-   - `04-ai-rag` 단계별 p95·소요 비중·평균, LLM 지연 분포, 모델 라우팅, 성공/실패
-   - `05-infrastructure` 컨테이너 CPU·스로틀링·메모리·네트워크·디스크·재시작
+2. ~~Grafana 대시보드 JSON 5개 작성~~ **완료** (아래 표 참고)
 3. **이미지 재빌드** — ai-server(prometheus-client), backend(actuator, micrometer)
 4. **검증**
    - `curl localhost:8000/metrics` → `rag_*` 지표가 나오는지
@@ -120,6 +115,24 @@ Prometheus의 `up{job="backend"}`으로 상태를 본다.
    - Grafana(`localhost:3000`)에서 데이터소스 연결과 대시보드 등록 확인
    - 채팅 요청을 한 번 보내 Langfuse에 서빙 트레이스가 실제로 남는지 (죽어 있던 것 복구 확인)
 5. **문서 마무리** — 실행 방법, 대시보드별 의미, 관측 못 하는 영역
+
+## 대시보드
+
+`monitoring/grafana/dashboards/`에 JSON으로 두고 provisioning으로 자동 등록된다.
+UI에서 만든 대시보드는 컨테이너와 함께 사라지므로 저장소에서 관리한다.
+
+| 대시보드 | 답하는 질문 |
+|---|---|
+| **01. Overview** | 어떤 서비스가 죽었나 / 느린가 / 에러가 오르나 / 자원이 모자란가 |
+| **02. Application** | 어떤 API가 느린가, 에러가 어디서 오르나, JVM이 힘든가 |
+| **03. Data & Middleware** | DB 커넥션이 모자란가, 캐시가 안 맞는가, ES가 느린가 |
+| **04. AI / RAG** | 하나의 RAG 요청이 어느 단계에서 시간을 쓰는가 |
+| **05. Infrastructure** | 컨테이너 자원 부족이 성능에 영향을 주는가 |
+
+핵심은 **01번의 "계층별 지연 분해"**와 **04번의 "단계별 p95"** 두 패널이다.
+전자는 backend / ai-server / LLM / ES 중 어디서 시간이 가는지를 한 그래프에 겹쳐 보여주고,
+후자는 AI 엔진 안에서 embedding / search / context_build / generation 중 어느 단계가
+병목인지 가른다. 나머지 패널은 이 둘에서 좁혀진 원인을 확인하는 용도다.
 
 ## 아직 관측할 수 없는 영역
 
