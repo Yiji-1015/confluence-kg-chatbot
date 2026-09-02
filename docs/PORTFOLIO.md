@@ -33,17 +33,22 @@
 |---|---|
 | `retrieval_hit` | 0.974 |
 | `retrieval_mrr` | 0.908 |
-| `answer_faithfulness` (직접 구현) | 0.951 |
-| `ragas_faithfulness` (표준) | 0.838 |
-| `answer_correctness` | 0.970 |
-| `ragas_context_precision` | 0.835 |
+| `answer_faithfulness` (직접 구현) | 0.989 |
+| `ragas_faithfulness` (표준) | 0.861 |
+| `answer_correctness` | 0.966 |
+| `ragas_context_precision` | 0.800 |
 
 세 점수를 조합하면 오답 원인을 검색 실패 / 컨텍스트 무시 / 이해 실패로 분리할 수 있다.
 실패 문항을 직접 열어본 결과 3건 중 2건은 지표 적용 오류(본문 없는 문서를 검색 지표로
 채점), 1건은 데이터셋 라벨 오류(실제로 존재하는 문서를 out-of-domain으로 표기)였다.
 
 자체 구현 faithfulness와 RAGAS 표준 지표를 나란히 기록해 교차 검증했고,
-자체 지표가 0.113 후하게 채점한다는 것을 확인했다.
+자체 지표가 0.1 안팎 후하게 채점한다는 것을 확인했다. RAGAS는 답변을 문장 단위로
+쪼개 각각 판정하는 반면 자체 구현은 답변 전체를 한 번에 보기 때문이다.
+
+최신 문서 가산점은 검색 지표를 바꾸지 않았고 `context_precision`만 0.035 낮췄다.
+관련성이 아닌 최신성으로 문서를 올리는 대가이며, 이득이 측정되지 않았음을 알고도
+"최신본 우선"이라는 제품 판단으로 유지하고 있다.
 
 ## 검증 기준
 
