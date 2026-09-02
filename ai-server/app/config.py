@@ -36,7 +36,12 @@ class Settings(BaseSettings):
 
     # 3. Elasticsearch 하이브리드 검색엔진 설정 (ELASTICSEARCH.md 기준: TLS + 인증 필수)
     ELASTICSEARCH_URL: str = "https://127.0.0.1:9200"
-    ELASTICSEARCH_INDEX: str = "confluence-openai-v1"
+    # 코드는 항상 별칭만 부른다. 임베딩 모델이나 차원이 바뀌어 전체 재색인이 필요할 때,
+    # 새 버전 인덱스를 채워둔 뒤 별칭만 옮기면 검색을 멈추지 않고 전환할 수 있고
+    # 문제가 생기면 별칭을 되돌리는 것만으로 즉시 롤백된다.
+    ELASTICSEARCH_INDEX: str = "confluence-current"
+    # 별칭이 가리킬 실제 인덱스. 최초 생성 때만 쓰인다.
+    ELASTICSEARCH_CONCRETE_INDEX: str = "confluence-openai-v1"
     ELASTICSEARCH_USER: str = "elastic"
     ELASTICSEARCH_PASSWORD: Optional[str] = None
     ELASTICSEARCH_CA_CERT: str = str(REPO_ROOT / "elasticsearch" / "certs" / "ca" / "ca.crt")

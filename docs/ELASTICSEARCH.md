@@ -115,7 +115,7 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 | 항목 | 값 |
 | --- | --- |
 | concrete index | `confluence-openai-v1` |
-| read/write alias | `confluence-current` |
+| read/write alias | `confluence-current` (2026-09-02 연결 완료) |
 | primary shards | `1` |
 | replicas | `0` |
 | vector field | `embedding` |

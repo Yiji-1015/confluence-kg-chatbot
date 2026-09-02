@@ -85,8 +85,14 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
             }
         }
 
-        es.indices.create(index=target_index, body=mapping)
-        print(f"[Elasticsearch] 인덱스 '{target_index}' 생성 완료 (Nori 분석기 + 1536차원 Vector 매핑)")
+        # 실제 인덱스를 만들고 그 위에 별칭을 붙인다. 별칭 이름으로 인덱스를 만들어버리면
+        # 나중에 새 버전으로 갈아끼울 이름표가 없어져 무중단 재색인 경로가 막힌다.
+        concrete = index_name or settings.ELASTICSEARCH_CONCRETE_INDEX
+        es.indices.create(index=concrete, body=mapping)
+        if concrete != target_index:
+            es.indices.put_alias(index=concrete, name=target_index)
+            print(f"[Elasticsearch] 별칭 '{target_index}' -> '{concrete}' 연결")
+        print(f"[Elasticsearch] 인덱스 '{concrete}' 생성 완료 (Nori 분석기 + 1536차원 Vector 매핑)")
         return True
 
     except Exception as e:
