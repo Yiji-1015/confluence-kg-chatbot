@@ -16,7 +16,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
@@ -34,4 +34,28 @@ spring:
 ai-engine:
   base-url: ${AI_ENGINE_URL:http://localhost:8000}
   timeout-seconds: 60
+
+# Actuator: 내부 관측용 엔드포인트만 연다. 그 외(env, beans, heapdump 등)는 설정·자격 정보가
+# 새어나갈 수 있어 노출하지 않는다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      # 여러 서비스 지표가 한 Prometheus에 모이므로 어느 서비스인지 라벨로 구분한다.
+      application: ${spring.application.name}
+  observations:
+    key-values:
+      application: ${spring.application.name}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 

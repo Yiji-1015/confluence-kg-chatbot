@@ -1,0 +1,37 @@
+# Prometheus 스크레이프 설정.
+#
+# 지표를 내는 주체는 애플리케이션 자신(ai-server /metrics, backend /actuator/prometheus)과
+# cAdvisor 하나뿐이다. postgres/redis/elasticsearch 전용 exporter는 두지 않았다.
+# 운영 판단에 필요한 것은 "DB 서버 내부 수치"가 아니라 "우리 앱이 DB를 쓸 때 겪는 지연과
+# 커넥션 고갈"이고, 그것은 Actuator의 HikariCP 지표와 앱에서 측정한 단계별 지연으로 이미
+# 나온다. exporter를 붙이면 컨테이너 3개가 늘고 대부분 안 보는 패널이 된다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: confluence-rag
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # AI 엔진: RAG 단계별 지연(embedding/search/context_build/generation), 요청 수·에러율,
+  # 검색 문서 수, 모델 라우팅 분포, 파이썬 프로세스 지표
+  - job_name: ai-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ai-server:8000"]
+
+  # 백엔드: HTTP 지연·에러율(http_server_requests), AI 엔진 호출 지연(http_client_requests),
+  # HikariCP 커넥션 풀, JVM 힙·GC·스레드, 대화 이력 캐시 적중률
+  - job_name: backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["backend:8080"]
+
+  # 컨테이너 자원: CPU, 메모리, 네트워크, 디스크. 서비스별 전용 exporter 없이
+  # 모든 컨테이너를 한 곳에서 덮는다.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

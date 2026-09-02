@@ -1,0 +1,73 @@
+# 모니터링 계층. 이 파일을 빼고 실행하면 서비스는 그대로 동작하고 관측만 없어진다.
+#
+# 컨테이너 3개를 새로 추가한 이유:
+# - prometheus: 시계열 저장소. 앱이 내는 /metrics를 주기적으로 긁어 보관한다.
+# - grafana: 대시보드. provisioning으로 데이터소스·대시보드를 코드에서 올린다.
+# - cadvisor: 컨테이너 자원(CPU/메모리/네트워크/디스크). 서비스별 exporter를 각각
+#   붙이는 대신 하나로 전체 컨테이너를 덮는다.
+#
+# 이미 있는 Elasticsearch + Kibana에 메트릭을 넣는 방법도 검토했으나 택하지 않았다.
+# ES는 mem_limit 2g로 RAG 검색을 담당하는 컴포넌트다. 거기에 메트릭 색인까지 얹으면
+# 감시 대상이 감시 비용을 부담하게 되어, 부하가 오를수록 관측이 함께 흔들린다.
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: rag-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # 로컬 개발 환경이므로 보관 기간을 짧게 잡아 디스크를 아낀다.
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 512m
+    restart: on-failure:3
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: rag-grafana
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      # 로컬 관측용이므로 가입·익명 접근을 막는다.
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    mem_limit: 512m
+    restart: on-failure:3
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: rag-cadvisor
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    # cAdvisor 기본 포트는 8080이라 backend와 겹친다. 호스트로는 노출하지 않고
+    # Prometheus가 컨테이너 네트워크 안에서만 접근한다.
+    expose:
+      - "8080"
+    mem_limit: 384m
+    restart: on-failure:3
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: confluence-net

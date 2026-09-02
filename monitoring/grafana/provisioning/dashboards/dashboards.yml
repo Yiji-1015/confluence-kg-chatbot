@@ -1,0 +1,14 @@
+# 대시보드 JSON을 파일에서 읽어 자동 등록한다. 사람이 UI에서 만든 대시보드는
+# 컨테이너와 함께 사라지므로 저장소에 두고 provisioning으로 올린다.
+apiVersion: 1
+providers:
+  - name: confluence-rag
+    orgId: 1
+    folder: Confluence RAG
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

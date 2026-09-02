@@ -1,7 +1,8 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, Response, status
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,8 +17,9 @@ if settings.LANGFUSE_HOST:
     os.environ["LANGFUSE_BASEURL"] = settings.LANGFUSE_HOST
 
 from app.api.v1.chat import router as chat_router
+from app.observability import metrics_response
 from app.llm.litellm_client import embed_texts_async
-from app.retrieval.es_client import search_hybrid_async
+from app.retrieval.es_client import get_es_client, search_hybrid_async
 
 
 @asynccontextmanager
@@ -65,17 +67,44 @@ app.include_router(chat_router)
 
 
 @app.get("/internal/health", tags=["Health Check"])
-async def health_check():
+async def health_check(response: Response):
     """
-    Docker 및 Spring Boot 백엔드 헬스체크용 엔드포인트.
-    AI 엔진의 정상 구동 여부와 주요 연동 서비스 설정 URL을 반환합니다.
+    실제 의존성 연결을 확인하는 헬스체크.
+
+    이전에는 설정 문자열만 돌려줘서 Elasticsearch나 LiteLLM이 죽어도 healthy를 반환했다.
+    그 상태로는 "떴다"와 "쓸 수 있다"가 구분되지 않아, 컨테이너는 정상인데 모든 요청이
+    실패하는 상황을 healthcheck가 놓친다. 의존성 하나라도 끊기면 503을 돌려준다.
     """
+    checks = {}
+
+    try:
+        es = get_es_client()
+        checks["elasticsearch"] = "up" if es.ping() else "down"
+    except Exception:
+        checks["elasticsearch"] = "down"
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{settings.LITELLM_BASE_URL}/v1/models")
+            checks["litellm"] = "up" if r.status_code == 200 else "down"
+    except Exception:
+        checks["litellm"] = "down"
+
+    healthy = all(v == "up" for v in checks.values())
+    if not healthy:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
     return {
-        "status": "healthy",
+        "status": "healthy" if healthy else "degraded",
         "app_name": settings.APP_NAME,
-        "litellm_url": settings.LITELLM_BASE_URL,
-        "elasticsearch_url": settings.ELASTICSEARCH_URL
+        "dependencies": checks,
     }
+
+
+@app.get("/metrics", tags=["Observability"], include_in_schema=False)
+async def metrics():
+    """Prometheus 스크레이프 엔드포인트 (RAG 단계별 지연, 에러율, 프로세스 지표)."""
+    return metrics_response()
 
 
 if __name__ == "__main__":

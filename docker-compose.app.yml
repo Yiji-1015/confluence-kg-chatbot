@@ -18,6 +18,15 @@ services:
     container_name: rag-ai-server
     ports:
       - "8000:8000"
+    # 헬스체크는 /internal/health를 호출한다. 이 엔드포인트가 Elasticsearch와 LiteLLM
+    # 연결을 실제로 확인하므로, 의존성이 끊기면 컨테이너가 unhealthy로 표시된다.
+    # 이미지에 curl이 없어(python:3.12-slim) 파이썬 표준 라이브러리로 호출한다.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/internal/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     environment:
       - APP_NAME=Confluence RAG Chatbot - AI Engine
       - DEBUG=true

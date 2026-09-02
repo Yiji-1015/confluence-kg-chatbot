@@ -6,6 +6,7 @@ import com.yiji.Chatbot.entity.ChatSession;
 import com.yiji.Chatbot.mapper.ChatMapper;
 import com.yiji.Chatbot.repository.ChatMessageRepository;
 import com.yiji.Chatbot.repository.ChatSessionRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -27,6 +28,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class ChatService {
+
+    private final MeterRegistry meterRegistry;
 
     private final ChatSessionRepository chatSessionRepository;
     private final ChatMessageRepository chatMessageRepository;
@@ -73,7 +76,12 @@ public class ChatService {
         // 2. Redis에서 해당 대화방의 최근 멀티턴 대화 기록 조회 (만료 시 DB에서 복구하는 Cache-Aside 적용)
         List<InternalChatDto.MessageRole> history = redisSessionService.getRecentHistory(sessionId);
         if (history.isEmpty()) {
+            // 캐시 미스는 지연으로만 보면 원인을 알 수 없다. 미스 비율이 높다는 것은
+            // Redis TTL(30분)이 실제 대화 간격보다 짧아 매 턴 DB를 때리고 있다는 뜻이다.
+            meterRegistry.counter("chat_history_cache", "result", "miss").increment();
             history = recoverHistoryFromDb(sessionId);
+        } else {
+            meterRegistry.counter("chat_history_cache", "result", "hit").increment();
         }
 
         // 3. Python AI Engine 호출 (하이브리드 검색 + LiteLLM 답변 생성)

@@ -8,4 +8,8 @@ langchain-text-splitters>=0.0.1
 beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0
 pandas>=2.0.0
-langfuse>=3.7.0
+# 메이저를 고정한다. >=3.7.0으로 열어두었더니 4.x가 설치되면서 v2 API인
+# langfuse.decorators가 사라졌고, try/except가 이를 no-op으로 대체해 서빙 경로의
+# 추적이 조용히 죽어 있었다 (2026-09-02 발견).
+langfuse>=4.14,<5
+prometheus-client>=0.20.0

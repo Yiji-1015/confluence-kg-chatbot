@@ -1,0 +1,11 @@
+# 데이터소스를 코드로 관리한다. UI에서 손으로 추가하면 컨테이너를 다시 만들 때 사라진다.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
