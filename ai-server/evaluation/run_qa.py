@@ -102,14 +102,19 @@ def rag_task(*, item, **kwargs):
     여기가 실서비스와 어긋나면, 평가 점수는 실제로 돌아가지 않는 파이프라인을 측정하게 된다.
     """
     query = item.input
-    query_vector = embed_texts([query])[0]
-    results = search_hybrid(query_text=query, query_vector=query_vector)
+    try:
+        query_vector = embed_texts([query])[0]
+        results = search_hybrid(query_text=query, query_vector=query_vector)
+        selected_model, _ = select_optimal_model(query=query)
+        context_text = build_context_text(results)
+        answer = generate_answer(query=query, context=context_text, model=selected_model)
+    except Exception as exc:
+        # 여기서 죽으면 채점기는 아예 호출되지 않아 채점기 집계에 안 잡힌다.
+        # 별도로 세지 않으면 "전부 실패했는데 누락 없음"이라고 보고하게 된다.
+        _FAILURES[f"rag_task(검색/생성): {type(exc).__name__}"] += 1
+        raise
 
     retrieved_doc_ids = [r.get("doc_id") for r in results]
-    context_text = build_context_text(results)
-
-    selected_model, _ = select_optimal_model(query=query)
-    answer = generate_answer(query=query, context=context_text, model=selected_model)
 
     return {
         "answer": answer,
@@ -307,8 +312,16 @@ def correctness_evaluator(*, input, output, expected_output=None, metadata=None,
     return Evaluation(name="answer_correctness", value=score, comment=reason)
 
 
-def _print_warnings():
-    """채점에서 빠진 문항이 있으면 크게 알린다. 평균만 보면 알 수 없기 때문이다."""
+def _print_warnings(scored: int = None, expected: int = None):
+    """
+    채점에서 빠진 문항이 있으면 크게 알린다. 평균만 보면 알 수 없기 때문이다.
+
+    실패 집계뿐 아니라 "실제로 채점된 문항 수"도 대조한다. 집계는 우리가 아는
+    실패만 세므로, 예상 못 한 경로로 빠진 문항은 개수 대조로만 잡힌다.
+    """
+    if scored is not None and expected is not None and scored != expected:
+        _FAILURES[f"문항 수 불일치: {expected}건 중 {scored}건만 채점됨"] += 1
+
     if not _FAILURES:
         print("\n채점 누락 없음 - 모든 문항이 정상 채점됐습니다.")
         return
@@ -359,7 +372,7 @@ def main():
     )
 
     print(result.format())
-    _print_warnings()
+    _print_warnings(scored=len(result.item_results), expected=len(dataset.items))
     _print_diagnosis(result.item_results)
 
     if result.dataset_run_url:
