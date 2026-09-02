@@ -44,6 +44,8 @@ services:
       - ./ai-server/app:/app/app:ro
       - ./ai-server/scripts:/app/scripts:ro
       - ./ai-server/evaluation:/app/evaluation:ro
+      # 평가 의존성 목록. 이미지에는 없고(서빙에 불필요) 평가 실행 시에만 설치한다.
+      - ./ai-server/requirements-eval.txt:/app/requirements-eval.txt:ro
       - ./elasticsearch/certs:/app/elasticsearch/certs:ro
       - ./.env:/app/.env:ro
     mem_limit: 1g

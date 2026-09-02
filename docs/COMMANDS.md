@@ -29,6 +29,26 @@ docker exec -it rag-ai-server python -m scripts.ingest --force
 docker exec -it rag-ai-server python -m scripts.ingest --category "솔루션/개발"
 ```
 
+## 검색 품질 평가
+
+RAGAS는 langchain/langgraph 등 50개+ 패키지를 끌고 와서 서빙 이미지에 넣지 않았다.
+컨테이너를 재생성하면 사라지므로 평가 전에 설치한다.
+
+```bash
+docker exec rag-ai-server pip install -r /app/requirements-eval.txt
+```
+
+```bash
+docker exec rag-ai-server python -m evaluation.run_qa
+```
+
+PowerShell에서는 `&&`를 쓸 수 없으므로 두 줄로 나눠 실행하거나 `;`로 잇는다.
+데이터셋을 고쳤다면 실행 전에 Langfuse로 올려야 반영된다.
+
+```bash
+docker exec rag-ai-server python -m evaluation.push_dataset
+```
+
 ## 상태 확인
 
 ```bash

@@ -2,8 +2,9 @@
 # ragas는 langchain / langgraph / datasets 등 50개+ 패키지를 끌고 오므로
 # 이걸 서빙 이미지에 넣으면 런타임이 불필요하게 무거워진다.
 #
-# 설치:  docker exec rag-ai-server pip install -r /app/evaluation/../requirements-eval.txt
-#   또는 로컬:  pip install -r ai-server/requirements-eval.txt
+# 설치 (PowerShell / bash 공통):
+#   docker exec rag-ai-server pip install -r /app/requirements-eval.txt
+# 컨테이너 재생성 시 사라지므로 평가 전에 매번 실행한다.
 
 ragas==0.4.3
 
