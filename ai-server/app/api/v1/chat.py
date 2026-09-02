@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.schemas.chat import ChatRequest, ChatResponse, SourceDocument
 from app.config import settings
 from app.retrieval.es_client import search_hybrid_async
+from app.retrieval.query_builder import build_search_query
 from app.llm.litellm_client import embed_texts_async, generate_answer_async
 from app.llm.model_router import select_optimal_model
 from app.llm.prompts import build_context_text
@@ -56,13 +57,18 @@ async def process_chat(request: ChatRequest) -> ChatResponse:
             except Exception:
                 pass
 
-        # 2. 질문 임베딩 비동기 생성 (OpenAI text-embedding-3-small via LiteLLM)
-        query_vectors = await embed_texts_async([query])
+        # 2. 검색용 질의 구성. 답변 생성에는 원본 query를 그대로 쓰고 검색어만 바꾼다.
+        search_query = build_search_query(
+            query, request.history, turns=settings.SEARCH_HISTORY_TURNS
+        )
+
+        # 3. 질문 임베딩 비동기 생성 (OpenAI text-embedding-3-small via LiteLLM)
+        query_vectors = await embed_texts_async([search_query])
         query_vector = query_vectors[0] if query_vectors else None
 
-        # 3. Elasticsearch 하이브리드 검색 비동기 수행 (BM25 + Vector kNN)
+        # 4. Elasticsearch 하이브리드 검색 비동기 수행 (BM25 + Vector kNN)
         es_results = await search_hybrid_async(
-            query_text=query,
+            query_text=search_query,
             query_vector=query_vector,
         )
 

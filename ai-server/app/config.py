@@ -48,6 +48,9 @@ class Settings(BaseSettings):
 
     # 검색 튜닝 파라미터 — 코드 수정/재빌드 없이 .env로 바꿔가며 실험한다.
     # (재색인은 필요 없다. 색인 데이터는 그대로 두고 검색 단계만 달라지는 값들)
+    # 멀티턴에서 검색어 앞에 붙일 직전 사용자 발화 수. 0이면 끈다.
+    # 지시어("그건 며칠까지야?")에는 주제어가 없어 검색이 빗나가므로 주제어를 복원한다.
+    SEARCH_HISTORY_TURNS: int = 1
     RETRIEVAL_TOP_K: int = 5              # 최종 컨텍스트에 넣을 "서로 다른 문서" 수
     RETRIEVAL_CANDIDATE_SIZE: int = 50    # BM25/kNN이 각각 가져올 재랭킹 후보 청크 수
     DOC_CONTEXT_MAX_CHARS: int = 3000     # 문서 하나를 컨텍스트에 넣을 때의 최대 글자 수
