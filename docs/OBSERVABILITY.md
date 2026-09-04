@@ -102,19 +102,48 @@ Prometheus의 `up{job="backend"}`으로 상태를 본다.
 
 ## 이어서 할 일
 
-**막힌 것: 디스크가 꽉 찼다(`ENOSPC`).** ai-server 이미지 빌드가 `EOF`로 실패하고
-파일 쓰기도 실패한다. 아래 작업은 디스크 정리가 선행되어야 한다.
+디스크(`ENOSPC`) 문제는 해소됐다. 2026-09-04 기준 상태:
 
-1. **디스크 정리** — `docker system df`로 확인 후 `docker image prune` 등
+1. ~~디스크 정리~~ **해소** (여유 29G)
 2. ~~Grafana 대시보드 JSON 5개 작성~~ **완료** (아래 표 참고)
-3. **이미지 재빌드** — ai-server(prometheus-client), backend(actuator, micrometer)
-4. **검증**
+3. ~~Grafana 연결 확인~~ **완료**
+   - 데이터소스: `Successfully queried the Prometheus API`
+   - 대시보드 5종 전부 `Confluence RAG` 폴더에 provisioning으로 자동 등록됨
+   - Prometheus 타겟: cadvisor UP, prometheus UP
+4. **이미지 재빌드** — ai-server(prometheus-client), backend(actuator, micrometer)
+5. **검증**
    - `curl localhost:8000/metrics` → `rag_*` 지표가 나오는지
    - `curl localhost:8080/actuator/prometheus` → `http_server_requests_*`가 나오는지
-   - `localhost:9090/targets` → 3개 job이 전부 UP인지
-   - Grafana(`localhost:3000`)에서 데이터소스 연결과 대시보드 등록 확인
+   - `localhost:9090/targets` → 4개 job이 전부 UP인지
    - 채팅 요청을 한 번 보내 Langfuse에 서빙 트레이스가 실제로 남는지 (죽어 있던 것 복구 확인)
-5. **문서 마무리** — 실행 방법, 대시보드별 의미, 관측 못 하는 영역
+6. **문서 마무리** — 실행 방법, 대시보드별 의미, 관측 못 하는 영역
+
+### 실행할 때 걸리던 것
+
+**모니터링 계층이 실행 명령에서 빠져 있었다.** `docker-compose.monitoring.yml`을 `-f`에
+넣지 않으면 Grafana·Prometheus가 아예 뜨지 않는다. `docs/COMMANDS.md`의 전체 실행 명령에
+채웠다.
+
+**Boot 4에서 backend가 기동에 실패했다.** `RestClient.Builder` 빈을 찾지 못해
+`APPLICATION FAILED TO START`. Boot 4부터 RestClient 자동 구성이 `starter-web`에서
+빠져 `spring-boot-starter-restclient`로 분리됐다. 이게 없으면 `AiClientConfig`가
+주입받을 빈이 없다. build.gradle에 추가했다.
+
+이 때문에 `up{job="backend"}`가 계속 DOWN이었고, backend 이미지에는 healthcheck가 없어
+컨테이너 상태로도 드러나지 않았다. Prometheus 타겟이 유일한 신호였다.
+
+**스크레이프 타겟이 실행 방식에 묶여 있었다.** 컨테이너 이름(`backend:8080`)으로 긁으면
+호스트에서 `./gradlew bootRun`으로 띄웠을 때 DNS 조회부터 실패한다. 실행 방식을 바꿀
+때마다 prometheus.yml을 고치게 되고, 고치면 `instance` 라벨이 바뀌어 Grafana에서 시계열이
+끊긴다.
+
+두 서비스 모두 포트를 호스트로 퍼블리시하므로 `host.docker.internal`로 통일했다.
+컨테이너 모드에서는 포트 포워딩을 타고, 호스트 모드에서는 프로세스에 직접 닿는다.
+리눅스에서는 이 이름이 자동으로 생기지 않아 prometheus 서비스에
+`extra_hosts: host.docker.internal:host-gateway`를 함께 넣었다.
+
+포트 퍼블리시에 의존하는 방식이다. 외부 배포에서 포트를 닫는다면 타겟을 컨테이너
+이름으로 되돌려야 한다. cadvisor는 호스트로 노출하지 않으므로 컨테이너 이름을 유지한다.
 
 ## 대시보드
 

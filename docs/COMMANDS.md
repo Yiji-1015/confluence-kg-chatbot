@@ -8,6 +8,7 @@ docker compose \
   -f docker-compose.search.yml \
   -f docker-compose.obs.yml \
   -f docker-compose.app.yml \
+  -f docker-compose.monitoring.yml \
   up -d --build
 ```
 
@@ -18,7 +19,11 @@ docker compose up -d
 docker compose -f docker-compose.yml -f docker-compose.search.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.obs.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.app.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 ```
+
+모니터링 계층은 단독으로 올려도 된다. Prometheus의 ai-server·backend 타겟만 DOWN이고
+cAdvisor 지표와 Grafana 대시보드는 그대로 뜬다.
 
 ## 문서 색인
 
@@ -54,6 +59,8 @@ docker exec rag-ai-server python -m evaluation.push_dataset
 ```bash
 docker compose ps
 curl http://localhost:8000/internal/health
+curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
+curl -s http://localhost:3000/api/health
 curl -k -u "elastic:$(grep -m1 '^ELASTIC_PASSWORD=' .env | cut -d= -f2-)" "https://localhost:9200/_cluster/health?pretty"
 ```
 
@@ -93,6 +100,16 @@ python -m uvicorn app.main:app --reload --port 8000
 ```bash
 cd backend
 ./gradlew bootRun
+```
+
+호스트에서 직접 띄워도 Prometheus 설정은 건드리지 않아도 된다. 타겟이
+`host.docker.internal`로 잡혀 있어 컨테이너 실행과 호스트 실행 양쪽에 그대로 닿는다.
+근거는 `monitoring/prometheus/prometheus.yml` 상단 주석 참고.
+
+컨테이너로 돌던 서비스를 호스트로 옮길 때는 포트가 겹치므로 해당 컨테이너만 내린다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.app.yml stop backend
 ```
 
 Windows에서는 `./gradlew` 대신 `gradlew.bat`을 사용합니다.

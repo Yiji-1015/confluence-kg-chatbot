@@ -22,6 +22,10 @@ services:
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    # 리눅스에서는 host.docker.internal이 자동으로 생기지 않는다. 이 항목이 없으면
+    # 스크레이프 타겟의 DNS 조회가 실패한다.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:9090:9090"
     mem_limit: 512m
