@@ -22,6 +22,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
+	// Boot 4부터 RestClient 자동 구성이 starter-web에서 빠져 별도 모듈이 됐다.
+	// 이게 없으면 AiClientConfig가 주입받는 RestClient.Builder 빈이 없어
+	// 애플리케이션이 기동에 실패한다.
+	implementation 'org.springframework.boot:spring-boot-starter-restclient'
 	// Actuator + Micrometer: HTTP 지연/에러율, HikariCP 커넥션 풀, JVM 힙·GC·스레드를
 	// 코드 수정 없이 Prometheus 형식으로 노출한다. 직접 계측하면 같은 것을 다시 만들게 된다.
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
