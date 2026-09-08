@@ -1,0 +1,8 @@
+# 저장소에는 항상 LF로 저장한다. 체크아웃 환경이 달라도 diff가 흔들리지 않게.
+* text=auto eol=lf
+
+# Windows 배치 파일은 CRLF여야 한다.
+*.bat text eol=crlf
+
+# 바이너리는 변환 대상에서 제외.
+*.jar binary
