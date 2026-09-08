@@ -17,6 +17,7 @@
   },
   "panels": [
     {
+      "id": 1,
       "type": "timeseries",
       "title": "단계별 p95 지연",
       "description": "병목 단계를 직접 답하는 패널. embedding / search / context_build / generation 중 가장 높은 선이 병목이다. 보통 generation이 지배적이며, search가 올라오면 ES 문제를 의심한다.",
@@ -69,6 +70,7 @@
       }
     },
     {
+      "id": 2,
       "type": "timeseries",
       "title": "단계별 소요 시간 비중",
       "description": "전체 처리 시간 중 각 단계가 차지하는 비율. 어디를 최적화해야 체감이 바뀌는지 판단한다.",
@@ -121,6 +123,7 @@
       }
     },
     {
+      "id": 3,
       "type": "timeseries",
       "title": "단계별 평균 소요 시간",
       "description": "p95와 함께 보면 '항상 느린지' 아니면 '가끔 튀는지'가 구분된다.",
@@ -173,6 +176,7 @@
       }
     },
     {
+      "id": 4,
       "type": "timeseries",
       "title": "LLM 생성 지연 분포",
       "description": "LLM은 외부 API라 우리가 직접 못 고치는 지연이다. p99가 튀면 모델 교체나 fallback을 검토한다.",
@@ -243,6 +247,7 @@
       }
     },
     {
+      "id": 5,
       "type": "timeseries",
       "title": "모델 라우팅 분포",
       "description": "비싼 모델(gpt-4o)로 쏠리면 비용과 지연이 함께 오른다. 라우팅 규칙이 의도대로 도는지 확인한다.",
@@ -295,6 +300,7 @@
       }
     },
     {
+      "id": 6,
       "type": "timeseries",
       "title": "RAG 요청 성공/실패",
       "description": "AI 엔진 관점의 처리량과 실패. 단계별 실패 패널(02번 대시보드)과 함께 보면 원인 단계까지 좁혀진다.",
@@ -347,6 +353,7 @@
       }
     },
     {
+      "id": 7,
       "type": "timeseries",
       "title": "검색 문서 수 (p50)",
       "description": "정상이면 RETRIEVAL_TOP_K(기본 5)에 가깝다. 계속 낮으면 검색이 후보를 못 채우고 있다는 뜻이다.",

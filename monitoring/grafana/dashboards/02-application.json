@@ -16,6 +16,7 @@
   },
   "panels": [
     {
+      "id": 1,
       "type": "timeseries",
       "title": "API별 p95 지연",
       "description": "어떤 API가 느린지. 특정 엔드포인트만 느리면 그 경로의 문제, 전부 느리면 공용 자원(DB/AI엔진) 문제다.",
@@ -68,6 +69,7 @@
       }
     },
     {
+      "id": 2,
       "type": "timeseries",
       "title": "API별 요청 수",
       "description": "어느 API가 트래픽을 받는지. 지연 패널과 함께 보면 '느린데 많이 불리는' 우선순위가 드러난다.",
@@ -120,6 +122,7 @@
       }
     },
     {
+      "id": 3,
       "type": "timeseries",
       "title": "API별 에러",
       "description": "에러가 어느 API에서 증가하는지. 4xx는 클라이언트 입력, 5xx는 서버 결함을 시사한다.",
@@ -172,6 +175,7 @@
       }
     },
     {
+      "id": 4,
       "type": "timeseries",
       "title": "RAG 단계별 실패",
       "description": "AI 엔진이 어느 단계에서 깨졌는지. 전체 에러율만 보면 원인 단계를 알 수 없다. exception 라벨이 예외 클래스 이름이라 시계열을 미리 만들어둘 수 없어, 실패가 한 번도 없으면 패널이 비어버린다. absent()로 그 동안만 0을 그린다. 실패가 생기면 0 계열은 사라지고 단계별 계열이 나타난다.",
@@ -233,6 +237,7 @@
       }
     },
     {
+      "id": 5,
       "type": "timeseries",
       "title": "JVM 힙",
       "description": "힙이 max에 붙고 GC가 잦아지면 응답 지연으로 이어진다.",
@@ -294,6 +299,7 @@
       }
     },
     {
+      "id": 6,
       "type": "timeseries",
       "title": "JVM GC 시간",
       "description": "초당 GC에 쓰는 시간. 0.1(=10%)을 넘으면 힙이 부족하다는 신호다.",
@@ -346,6 +352,7 @@
       }
     },
     {
+      "id": 7,
       "type": "timeseries",
       "title": "스레드 / 파일 디스크립터",
       "description": "스레드가 계속 늘면 누수, fd가 계속 늘면 커넥션을 닫지 않는 것이다.",

@@ -16,6 +16,7 @@
   },
   "panels": [
     {
+      "id": 1,
       "type": "stat",
       "title": "서비스 상태",
       "description": "Prometheus가 각 서비스의 메트릭을 긁는 데 성공했는지. DOWN이면 그 서비스가 죽었거나 응답하지 않는다.",
@@ -90,6 +91,7 @@
       }
     },
     {
+      "id": 2,
       "type": "timeseries",
       "title": "요청 처리량",
       "description": "처리량이 갑자기 0이면 앞단이 끊긴 것이고, 급증하면 지연 상승의 원인일 수 있다.",
@@ -151,6 +153,7 @@
       }
     },
     {
+      "id": 3,
       "type": "timeseries",
       "title": "에러율",
       "description": "어느 서비스에서 에러가 오르는지. backend만 오르면 backend 자체 문제, 둘 다 오르면 ai-server 또는 그 하위(ES/LLM) 문제다.",
@@ -212,6 +215,7 @@
       }
     },
     {
+      "id": 4,
       "type": "timeseries",
       "title": "사용자 체감 지연 p50 / p95 / p99",
       "description": "사용자가 실제로 기다리는 시간. p99만 튀면 일부 요청이 느린 것이고, p50까지 오르면 전반적 포화다.",
@@ -282,6 +286,7 @@
       }
     },
     {
+      "id": 5,
       "type": "timeseries",
       "title": "계층별 지연 분해 (p95)",
       "description": "지연이 어느 계층에서 생기는지 답하는 핵심 패널. 1)과 2)의 차이가 backend 자체 시간, 2)와 3)+4)의 차이가 ai-server 자체 시간이다. 네 계열 모두 채팅 경로(POST /api/chat → POST /internal/chat)로 한정한다. 한정하지 않으면 가벼운 목록 조회가 1)의 p95를 끌어내려 뺄셈이 음수가 된다.",
@@ -361,6 +366,7 @@
       }
     },
     {
+      "id": 6,
       "type": "timeseries",
       "title": "컨테이너 CPU",
       "description": "1.0 = 코어 1개를 가득 쓰는 중. 한계에 붙은 서비스가 지연의 원인일 수 있다.",
@@ -413,6 +419,7 @@
       }
     },
     {
+      "id": 7,
       "type": "timeseries",
       "title": "메모리 사용률 (limit 대비)",
       "description": "1.0에 가까우면 OOM으로 재시작될 위험이 있다. compose의 mem_limit 대비 비율이다.",
@@ -465,6 +472,7 @@
       }
     },
     {
+      "id": 8,
       "type": "timeseries",
       "title": "재시작 징후 (1시간)",
       "description": "1시간 안에 재시작한 횟수. OOM이나 크래시 루프를 잡는다.",
