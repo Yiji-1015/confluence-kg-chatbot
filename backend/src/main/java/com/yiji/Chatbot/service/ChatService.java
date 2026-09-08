@@ -3,16 +3,15 @@ package com.yiji.Chatbot.service;
 import com.yiji.Chatbot.dto.*;
 import com.yiji.Chatbot.entity.ChatMessage;
 import com.yiji.Chatbot.entity.ChatSession;
+import com.yiji.Chatbot.exception.SessionNotFoundException;
 import com.yiji.Chatbot.mapper.ChatMapper;
 import com.yiji.Chatbot.repository.ChatMessageRepository;
 import com.yiji.Chatbot.repository.ChatSessionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -159,14 +158,15 @@ public class ChatService {
     private ChatSession requireOwnedSession(String sessionId, String userId) {
         return chatSessionRepository.findById(sessionId)
                 .map(session -> requireOwner(session, userId))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "대화방을 찾을 수 없습니다."));
+                .orElseThrow(() -> new SessionNotFoundException(sessionId));
     }
 
     private ChatSession requireOwner(ChatSession session, String userId) {
         if (!Objects.equals(session.getUserId(), userId)) {
-            // 대화방 존재 여부까지 알려주지 않도록 403 대신 404로 응답한다.
+            // 소유자가 달라도 "없음"으로 취급한다. 403으로 답하면 그 대화방이 존재한다는 사실이 새어나간다.
+            // 404로의 번역은 GlobalExceptionHandler가 맡는다. 서비스는 상태 코드를 모른다.
             log.warn("[ChatService] 소유자가 아닌 대화방 접근 차단 (sessionId: {}, userId: {})", session.getId(), userId);
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "대화방을 찾을 수 없습니다.");
+            throw new SessionNotFoundException(session.getId());
         }
         return session;
     }

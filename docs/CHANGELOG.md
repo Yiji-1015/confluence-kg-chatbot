@@ -2,6 +2,57 @@
 
 설계 판단이 필요했던 변경만 근거와 함께 남긴다. 사소한 수정은 git log로 충분하다.
 
+## 2026-09-08
+
+### 전역 예외 처리기 도입 (에러 응답을 ProblemDetail로 통일)
+
+지금까지 실패 응답의 형식이 세 갈래였다. `@Valid` 실패는 Boot 기본 에러 JSON,
+`ResponseStatusException`은 또 다른 형태, AI 호출 실패는 아예 200 OK. 프론트가
+읽을 수 있는 공통 계약이 없어서 `서버 오류 (400)`처럼 상태 코드만 보여주고 있었다.
+그 결과 `ChatRequestDto`에 적어둔 "질문은 최대 1000자까지 입력 가능합니다."가
+어디에도 도달하지 못했다.
+
+`@RestControllerAdvice` + `ResponseEntityExceptionHandler` 상속으로 한 곳에 모으고,
+응답 형식을 RFC 9457 `ProblemDetail`(`application/problem+json`)로 통일했다.
+
+- 상속을 택한 이유: 본문 파싱 실패, 필수 파라미터 누락, 허용되지 않은 메서드 같은
+  Spring MVC 표준 예외 처리가 이미 들어 있다. 직접 `@ExceptionHandler`를 나열하면
+  같은 것을 다시 만들면서 빠뜨리게 된다. 실제로 오버라이드한 것은
+  `handleMethodArgumentNotValid` 하나뿐이다.
+- 검증 실패는 첫 번째 필드 메시지를 `detail`에, 필드별 전체를 `errors`에 담는다.
+  `detail`은 사용자에게 그대로 보여줄 문장이고, `errors`는 폼 단위로 표시할 때 쓴다.
+- 도메인 예외(`SessionNotFoundException`, `AiEngineException`)는 웹 타입을 참조하지
+  않는다. 상태 코드로의 번역은 처리기 한 곳에서만 한다. 서비스가
+  `ResponseStatusException`을 import하던 계층 역전(BACKEND_REVIEW 2번)을 풀기 위한
+  자리를 먼저 만들어둔 것이다.
+- `AiEngineException`은 502로 매핑하되 `ex.getMessage()`를 응답에 싣지 않는다.
+  원인 예외 메시지에는 내부 AI 서버 URL과 예외 클래스명이 들어 있다. 원인은 로그로만.
+
+프론트(`static/index.html`)도 실패 시 `problem.detail`을 읽도록 고쳤다. 서버만 고치면
+메시지는 여전히 화면에 닿지 않는다.
+
+### 서비스 계층에서 웹 예외 제거
+
+`ChatService`가 `ResponseStatusException`을 던지고 있었다. 서비스가 HTTP 상태 코드를
+알고 있다는 뜻이고, 계층이 역전된 상태였다. 같은 서비스를 배치나 다른 진입점에서 쓰면
+그 자리에서 웹 예외가 튀어나온다.
+
+`SessionNotFoundException`으로 바꿨다. 도메인 예외는 "이 대화방 없음"까지만 말하고,
+404라는 판단은 `GlobalExceptionHandler`가 한다. 예외 클래스에 `@ResponseStatus`를 붙이는
+방법도 있지만 쓰지 않았다. 그러면 상태 코드를 아는 주체가 도메인으로 다시 내려와,
+같은 역전을 이름만 바꿔 유지하게 된다.
+
+소유자 불일치를 403이 아닌 404로 답하는 판단은 그대로 유지했다(근거는 아래 2026-09-01).
+바뀐 것은 그 판단이 놓인 위치뿐이다.
+
+같이 고친 프론트 두 곳:
+
+- `selectSession`이 `res.ok`를 확인하지 않고 바로 `messages.forEach`를 돌고 있었다.
+  실패 본문은 배열이 아니라 ProblemDetail이라 "대화 불러오기 실패:
+  messages.forEach is not a function"이라는 엉뚱한 문구가 뜬다.
+- `deleteSession`은 응답을 확인조차 하지 않았다. 남의 대화방 삭제 시도가 404로 거절돼도
+  사용자 화면에서는 성공한 것처럼 보였다. 소유자 검증을 넣어둔 의미가 없어지는 지점이다.
+
 ## 2026-09-01
 
 ### 세션 소유자 검증 추가
