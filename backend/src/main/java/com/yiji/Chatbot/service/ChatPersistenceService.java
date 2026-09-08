@@ -11,6 +11,9 @@ import com.yiji.Chatbot.repository.ChatMessageRepository;
 import com.yiji.Chatbot.repository.ChatSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,13 +71,11 @@ public class ChatPersistenceService {
      */
     @Transactional(readOnly = true)
     public List<InternalChatDto.MessageRole> loadRecentHistory(String sessionId) {
-        List<ChatMessage> messages = chatMessageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (messages.isEmpty()) {
-            return List.of();
-        }
+        // 최신순으로 필요한 개수만 가져온 뒤 시간순으로 되돌린다.
+        List<ChatMessage> recent = chatMessageRepository.findBySessionIdOrderByCreatedAtDescIdDesc(
+                sessionId, PageRequest.of(0, RECENT_HISTORY_SIZE));
 
-        int from = Math.max(0, messages.size() - RECENT_HISTORY_SIZE);
-        return messages.subList(from, messages.size()).stream()
+        return recent.reversed().stream()
                 .map(message -> InternalChatDto.MessageRole.builder()
                         .role(message.getRole().toLowerCase()) // "user" 또는 "assistant"
                         .content(message.getContent())
@@ -120,22 +121,25 @@ public class ChatPersistenceService {
     }
 
     /**
-     * 사용자의 대화방 목록 (최신순)
+     * 사용자의 대화방 목록. 정렬·크기는 컨트롤러가 넘긴 Pageable이 정한다.
      */
     @Transactional(readOnly = true)
-    public List<ChatSessionDto> getSessions(String userId) {
-        return chatSessionRepository.findAllByUserIdOrderByUpdatedAtDesc(userId).stream()
-                .map(chatMapper::toSessionDto)
-                .toList();
+    public Page<ChatSessionDto> getSessions(String userId, Pageable pageable) {
+        return chatSessionRepository.findByUserId(userId, pageable)
+                .map(chatMapper::toSessionDto);
     }
 
     /**
      * 특정 대화방의 전체 메시지 (본인 대화방만)
+     *
+     * 여기는 페이징하지 않는다. 대화 내역 화면은 대화 전체를 그려야 하는데, 조용히 잘라내면
+     * 사용자는 앞부분이 사라진 줄 안다. 무한 쿼리보다 조용한 누락이 나쁘다.
+     * 제대로 하려면 "이전 대화 더 보기" 같은 화면 쪽 작업이 함께 필요하다.
      */
     @Transactional(readOnly = true)
     public List<ChatMessageDto> getMessages(String sessionId, String userId) {
         requireOwnedSession(sessionId, userId);
-        return chatMessageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+        return chatMessageRepository.findBySessionIdOrderByCreatedAtAscIdAsc(sessionId).stream()
                 .map(chatMapper::toMessageDto)
                 .toList();
     }

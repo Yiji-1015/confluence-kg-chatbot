@@ -3,10 +3,12 @@ package com.yiji.Chatbot.controller;
 import com.yiji.Chatbot.exception.AiEngineException;
 import com.yiji.Chatbot.exception.SessionNotFoundException;
 import com.yiji.Chatbot.service.ChatService;
+import com.yiji.Chatbot.web.CurrentUserArgumentResolver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,7 +33,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 즉 DTO에 적어둔 문구가 사용자에게 도달할 경로가 없었다.
  */
 @WebMvcTest(ChatController.class)
+@Import(CurrentUserArgumentResolver.class)
 class ChatControllerErrorHandlingTest {
+
+    private static final String USER = "u-1";
 
     @Autowired
     private MockMvc mockMvc;
@@ -43,10 +48,12 @@ class ChatControllerErrorHandlingTest {
     @DisplayName("1000자를 넘는 질문은 400과 함께 DTO에 적어둔 메시지를 돌려준다")
     void tooLongQueryReturnsMessage() throws Exception {
         String body = """
-                {"userId": "u-1", "query": "%s"}
+                {"query": "%s"}
                 """.formatted("가".repeat(1001));
 
-        mockMvc.perform(post("/api/chat").contentType(APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/api/chat")
+                        .header(CurrentUserArgumentResolver.HEADER, USER)
+                        .contentType(APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.detail").value("질문은 최대 1000자까지 입력 가능합니다."))
@@ -54,15 +61,32 @@ class ChatControllerErrorHandlingTest {
     }
 
     @Test
-    @DisplayName("userId가 비어 있으면 400과 함께 해당 필드 메시지를 돌려준다")
-    void blankUserIdReturnsMessage() throws Exception {
-        String body = """
-                {"userId": "", "query": "안녕하세요"}
-                """;
-
-        mockMvc.perform(post("/api/chat").contentType(APPLICATION_JSON).content(body))
+    @DisplayName("질문이 비어 있으면 400과 함께 해당 필드 메시지를 돌려준다")
+    void blankQueryReturnsMessage() throws Exception {
+        mockMvc.perform(post("/api/chat")
+                        .header(CurrentUserArgumentResolver.HEADER, USER)
+                        .contentType(APPLICATION_JSON).content("""
+                                {"query": "  "}
+                                """))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.userId").value("사용자 식별자가 필요합니다."));
+                .andExpect(jsonPath("$.errors.query").value("질문 내용을 입력해주세요."));
+    }
+
+    @Test
+    @DisplayName("X-User-Id 헤더가 없으면 400으로 거절한다")
+    void missingUserHeaderIsRejected() throws Exception {
+        mockMvc.perform(get("/api/sessions"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value(containsString("X-User-Id")));
+    }
+
+    @Test
+    @DisplayName("X-User-Id 헤더가 공백뿐이어도 거절한다")
+    void blankUserHeaderIsRejected() throws Exception {
+        mockMvc.perform(get("/api/sessions")
+                        .header(CurrentUserArgumentResolver.HEADER, "   "))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -71,7 +95,8 @@ class ChatControllerErrorHandlingTest {
         given(chatService.getMessages(anyString(), anyString()))
                 .willThrow(new SessionNotFoundException("s-404"));
 
-        mockMvc.perform(get("/api/sessions/s-404/messages").param("userId", "u-1"))
+        mockMvc.perform(get("/api/sessions/s-404/messages")
+                        .header(CurrentUserArgumentResolver.HEADER, USER))
                 .andExpect(status().isNotFound())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.title").value("대화방을 찾을 수 없음"))
@@ -81,16 +106,16 @@ class ChatControllerErrorHandlingTest {
     @Test
     @DisplayName("AI 엔진 실패는 502가 되고 내부 주소·예외 메시지는 응답에 실리지 않는다")
     void aiEngineFailureBecomes502() throws Exception {
-        given(chatService.processChat(any()))
+        given(chatService.processChat(any(), anyString()))
                 .willThrow(new AiEngineException(
                         "AI 서버 호출 실패 (sessionId: s-1)",
                         new RuntimeException("Connection refused: http://ai-server:8000/internal/chat")));
 
-        String body = """
-                {"userId": "u-1", "query": "안녕하세요"}
-                """;
-
-        mockMvc.perform(post("/api/chat").contentType(APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/api/chat")
+                        .header(CurrentUserArgumentResolver.HEADER, USER)
+                        .contentType(APPLICATION_JSON).content("""
+                                {"query": "안녕하세요"}
+                                """))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.detail")
                         .value("AI 검색 엔진에 일시적으로 연결할 수 없습니다. 잠시 후 다시 시도해주세요."))

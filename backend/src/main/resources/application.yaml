@@ -12,10 +12,25 @@ spring:
     password: ${POSTGRES_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
-  # 2. JPA & Hibernate 설정 (테이블 자동 생성 및 SQL 로그 포맷팅)
+  # 2. 스키마는 Flyway가 만든다 (db/migration). Hibernate는 검증만 한다.
+  #    validate는 엔티티와 실제 테이블이 어긋나면 기동 자체를 막는다.
+  #    update였을 때는 어긋나도 조용히 넘어가거나 되돌릴 수 없는 변경이 들어갔다.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # 기존 개발 DB에는 ddl-auto: update가 만들어 둔 테이블이 이미 있다. 이력 테이블이 없는
+    # 채로 비어 있지 않은 스키마를 만나면 Flyway는 기동을 막는다("Found non-empty schema").
+    # baseline-version을 0으로 두는 것이 핵심이다. 기본값 1이면 V1이 "이미 적용된 것"으로
+    # 간주돼 건너뛰고, V1이 함께 만드는 인덱스가 기존 DB에는 생기지 않는다.
+    # 0이면 V1이 실제로 실행되고, 테이블은 IF NOT EXISTS라 그대로, 인덱스만 새로 생긴다.
+    # 새 DB에서는 스키마가 비어 있으므로 이 설정과 무관하게 V1부터 정상 실행된다.
+    baseline-on-migrate: true
+    baseline-version: 0
+
+  # 3. JPA & Hibernate 설정
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:

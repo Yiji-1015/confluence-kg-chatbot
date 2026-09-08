@@ -5,6 +5,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.springframework.data.domain.Persistable;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -19,7 +20,7 @@ import java.util.List;
 @Table(name = "chat_sessions")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class ChatSession {
+public class ChatSession implements Persistable<String> {
 
     @Id
     @Column(name = "session_id", length = 64)
@@ -40,6 +41,17 @@ public class ChatSession {
     @OneToMany(mappedBy = "session", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ChatMessage> messages = new ArrayList<>();
 
+    /**
+     * 새 엔티티인지 여부. DB에 저장되는 값이 아니다.
+     *
+     * `@Id`가 직접 할당된 String이고 `@Version`도 없어서, Spring Data는 `id != null`만 보고
+     * "이미 존재하는 엔티티"라고 판단한다. 그래서 `save()`가 `persist`가 아니라 `merge`로 가고,
+     * merge는 존재 확인을 위해 INSERT 전에 SELECT를 한 번 더 낸다.
+     * Persistable을 구현해 그 판단을 우리가 직접 내린다.
+     */
+    @Transient
+    private boolean isNew = true;
+
     @Builder
     public ChatSession(String id, String userId, String title) {
         this.id = id;
@@ -47,6 +59,20 @@ public class ChatSession {
         this.title = title;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    /**
+     * 영속화되었거나 DB에서 읽어온 시점부터는 새 엔티티가 아니다.
+     */
+    @PostPersist
+    @PostLoad
+    void markNotNew() {
+        this.isNew = false;
     }
 
     /**

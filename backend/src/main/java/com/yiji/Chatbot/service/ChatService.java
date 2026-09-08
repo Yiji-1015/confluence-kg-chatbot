@@ -10,6 +10,8 @@ import com.yiji.Chatbot.mapper.ChatMapper;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -73,9 +75,8 @@ public class ChatService {
      * 그래서 DB를 만지는 구간만 ChatPersistenceService의 짧은 트랜잭션으로 나눠 두고,
      * AI 호출은 그 밖에 둔다.
      */
-    public ChatResponseDto processChat(ChatRequestDto requestDto) {
+    public ChatResponseDto processChat(ChatRequestDto requestDto, String userId) {
         String query = requestDto.query().trim();
-        String userId = requestDto.userId();
 
         // 1. 이어쓸 수 있는 대화방인지 확인한다. 아니면 서버가 새 ID를 발급한다.
         //    (예전에는 클라이언트가 준 ID로 없는 대화방을 만들어줬다. 서버가 ID 발급을 통제하지 못했다.)
@@ -109,8 +110,8 @@ public class ChatService {
     /**
      * 전체 대화방 목록 최신순 조회
      */
-    public List<ChatSessionDto> getSessions(String userId) {
-        return chatPersistenceService.getSessions(userId);
+    public Page<ChatSessionDto> getSessions(String userId, Pageable pageable) {
+        return chatPersistenceService.getSessions(userId, pageable);
     }
 
     /**

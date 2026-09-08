@@ -63,7 +63,7 @@ class ChatServiceTest {
         given(chatPersistenceService.canContinue(null, "u-1")).willReturn(false);
         given(aiEngineClient.requestChat(anyString(), anyString(), any())).willReturn(aiAnswers("답변"));
 
-        ChatResponseDto response = chatService.processChat(new ChatRequestDto(null, "u-1", "질문"));
+        ChatResponseDto response = chatService.processChat(new ChatRequestDto(null, "질문"), "u-1");
 
         assertThat(response.sessionId()).isNotBlank();
         verify(redisSessionService, never()).getRecentHistory(anyString());
@@ -77,7 +77,7 @@ class ChatServiceTest {
         given(aiEngineClient.requestChat(anyString(), anyString(), any())).willReturn(aiAnswers("답변"));
 
         ChatResponseDto response =
-                chatService.processChat(new ChatRequestDto("client-made-up-id", "u-1", "질문"));
+                chatService.processChat(new ChatRequestDto("client-made-up-id", "질문"), "u-1");
 
         assertThat(response.sessionId()).isNotEqualTo("client-made-up-id");
     }
@@ -90,7 +90,7 @@ class ChatServiceTest {
         given(chatPersistenceService.loadRecentHistory("s-1")).willReturn(List.of());
         given(aiEngineClient.requestChat(anyString(), anyString(), any())).willReturn(aiAnswers("답변"));
 
-        chatService.processChat(new ChatRequestDto("s-1", "u-1", "질문"));
+        chatService.processChat(new ChatRequestDto("s-1", "질문"), "u-1");
 
         InOrder order = inOrder(chatPersistenceService, redisSessionService);
         order.verify(chatPersistenceService).saveTurn("s-1", "u-1", "질문", "답변", null);
@@ -104,7 +104,7 @@ class ChatServiceTest {
         given(aiEngineClient.requestChat(anyString(), anyString(), any()))
                 .willThrow(new AiEngineException("AI 서버 호출 실패"));
 
-        assertThatThrownBy(() -> chatService.processChat(new ChatRequestDto(null, "u-1", "질문")))
+        assertThatThrownBy(() -> chatService.processChat(new ChatRequestDto(null, "질문"), "u-1"))
                 .isInstanceOf(AiEngineException.class);
 
         verify(chatPersistenceService, never()).saveTurn(anyString(), anyString(), anyString(), anyString(), any());

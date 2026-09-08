@@ -4,6 +4,82 @@
 
 ## 2026-09-08
 
+### 신원을 URL에서 헤더로 (`X-User-Id`)
+
+모든 엔드포인트가 `userId`를 쿼리 파라미터로 받고 있었다. 두 가지가 걸렸다.
+
+- 신원이 URL에 실려 액세스 로그·프록시 로그·브라우저 히스토리에 그대로 남는다.
+  삭제 요청까지 `DELETE /api/sessions/{id}?userId=...` 형태였다.
+- 컨트롤러와 서비스 시그니처마다 `userId`가 반복되는데, 정작 아무도 빈 값을 검증하지
+  않았다. 빈 문자열이 와도 400이 아니라 빈 목록이 200으로 나갔다.
+
+`@CurrentUser` 애너테이션과 `HandlerMethodArgumentResolver`로 `X-User-Id` 헤더에서
+받는다. 헤더가 없거나 공백뿐이면 Spring 표준 `MissingRequestHeaderException`을 던진다.
+이미 상속해 둔 `ResponseEntityExceptionHandler`가 400 ProblemDetail로 번역하므로
+처리기를 새로 만들지 않았다. 검증 구멍도 이걸로 함께 닫힌다.
+
+`ChatRequestDto`에서도 `userId`를 뺐다. 신원은 "무엇을 물었는가"와 다른 층위의 정보이고,
+모든 엔드포인트가 공통으로 필요로 한다. 요청 본문마다 실어 나를 이유가 없다.
+
+**API가 바뀐다.** 프론트는 `authHeaders()` 하나로 네 요청 모두에 헤더를 붙이도록 고쳤다.
+다른 클라이언트는 없다.
+
+### 대화방 목록 페이징, 대화 내역은 그대로 둔 이유
+
+`getSessions`가 사용자의 대화방을 전부 반환했다. 쌓일수록 응답이 무한정 커지는데
+사이드바는 최근 것만 보여준다. `Page<ChatSessionDto>`로 바꾸고
+`@PageableDefault(size = 50, sort = "updatedAt", DESC)`를 걸었다.
+
+프론트는 `page.content`를 읽고, `totalElements`가 더 크면 "최근 50개만 표시 (전체 N개)"를
+함께 보여준다. **잘린 것을 숨기지 않는다.** 조용히 빠지면 사용자는 대화가 사라진 줄 안다.
+
+`getMessages`는 일부러 페이징하지 않았다. 대화 내역 화면은 대화 전체를 그려야 하는데,
+조용히 잘라내면 앞부분이 사라진 것처럼 보인다. 무한 쿼리보다 조용한 누락이 나쁘다.
+제대로 하려면 "이전 대화 더 보기" 같은 화면 쪽 작업이 함께 필요하고, 그건 남겨둔다.
+
+같이 고친 것: `loadRecentHistory`가 대화 전체를 읽어 메모리에서 마지막 10개만 잘라내고
+있었다. 캐시가 만료될 때마다 세션 전체를 스캔하는 셈이었다. 필요한 만큼만 DB에서
+가져온다. 정렬에 `createdAt`뿐 아니라 `id`를 함께 쓴다. `createdAt`은 애플리케이션이
+`LocalDateTime.now()`로 넣기 때문에 같은 턴의 질문과 답변이 같은 값을 가질 수 있고,
+그러면 순서가 실행할 때마다 달라져 대화가 뒤집혀 보인다.
+
+### 스키마 소유권을 Hibernate에서 Flyway로
+
+`ddl-auto: update`는 무엇이 언제 왜 바뀌었는지 기록을 남기지 않는다. 컬럼 삭제나
+타입 변경은 조용히 건너뛰고, 되돌릴 방법도 없다. 운영에 나가기 전에 정리해야 할 항목이었다.
+
+`spring-boot-starter-flyway` + `V1__init_chat_schema.sql`, `ddl-auto: validate`로 바꿨다.
+validate는 엔티티와 실제 테이블이 어긋나면 기동 자체를 막는다.
+
+기존 개발 DB에는 `ddl-auto: update`가 만들어 둔 테이블이 이미 있어서 그냥 켜면 멈춘다.
+
+```
+Found non-empty schema(s) "public" but no schema history table.
+```
+
+`baseline-on-migrate: true` + **`baseline-version: 0`** 으로 풀었다. 여기서 0이 핵심이다.
+기본값 1이면 V1이 "이미 적용된 것"으로 간주돼 건너뛰고, V1이 함께 만드는 인덱스가
+기존 DB에는 생기지 않는다. 0이면 V1이 실제로 실행되는데, 테이블은 `IF NOT EXISTS`라
+그대로 두고 인덱스만 새로 생긴다. 새 DB에서는 스키마가 비어 있으므로 이 설정과 무관하게
+V1부터 정상 실행된다.
+
+없던 인덱스 두 개를 V1에 같이 넣었다.
+
+- `(user_id, updated_at DESC)` — 사이드바의 페이지 조회
+- `(session_id, created_at, message_id)` — 대화 조회와 최근 맥락 조회.
+  FK 컬럼에 인덱스가 없으면 대화방 삭제 시 자식 테이블을 전부 훑는다.
+
+### `save(새 세션)`이 내던 여분의 SELECT 제거
+
+`ChatSession`은 `@Id`가 직접 할당된 String이고 `@Version`이 없다. 그래서 Spring Data의
+`isNew()`가 `id != null`만 보고 "이미 존재하는 엔티티"라고 판단했고, `save()`가
+`persist`가 아니라 `merge`로 갔다. merge는 존재 확인을 위해 INSERT 전에 SELECT를 한 번
+더 낸다. 대화방을 만들 때마다 쓸모없는 조회가 하나씩 나가고 있었다.
+
+`Persistable<String>`을 구현하고 `@Transient boolean isNew`를 `@PostPersist`/`@PostLoad`에서
+내린다. 이제 `persist`로 가서 INSERT만 나간다.
+
+
 ### 전역 예외 처리기 도입 (에러 응답을 ProblemDetail로 통일)
 
 지금까지 실패 응답의 형식이 세 갈래였다. `@Valid` 실패는 Boot 기본 에러 JSON,

@@ -290,20 +290,57 @@ WARNING:  Invalid HTTP request received.
     404로 거절하는 방법도 있지만, 그러면 localStorage에 오래된 ID가 남은 사용자가
     대화를 시작하지 못한다. 응답의 `sessionId`를 프론트가 갱신하므로 끊김은 없다.
 
-## 9. 나중에
+## 9. 나중에 → 2026-09-08 정리
 
-- `userId`가 모든 엔드포인트에 쿼리 파라미터로 반복된다. `HandlerInterceptor` +
-  `HandlerMethodArgumentResolver`로 뽑아내면 서비스 시그니처에서 사라진다.
-  DELETE URL에 신원이 실려 액세스 로그에 남는 문제도 같이 해결된다.
-  덧붙여 지금 `@RequestParam userId`에는 검증이 없다. 빈 문자열이 와도 400이 아니라
-  빈 목록이 200으로 나간다(`ChatRequestDto`의 `@NotBlank`는 POST 본문에만 걸려 있다).
-- `getSessions`, `getMessages`에 페이징 없음. Spring Data `Pageable`.
-  같은 뿌리로 `ChatService.recoverHistoryFromDb`(`:178-185`)는 대화 이력을 통째로 읽어
-  메모리에서 마지막 10개만 잘라낸다. 캐시가 만료될 때마다 세션 전체를 스캔한다.
-- 테스트가 `contextLoads` 하나뿐. `spring-boot-starter-webmvc-test`가 이미 있으니
-  `@WebMvcTest`로 컨트롤러 검증 추가.
-- `ddl-auto: update` → Flyway. (MVC 관례와는 별개 사안)
-- `chatSessionRepository.save(새 세션)`이 INSERT 전에 SELECT를 한 번 더 낸다.
-  `ChatSession`은 `@Id`가 직접 할당된 String이고 `@Version`이 없어서 Spring Data의
-  `isNew()`가 `id != null` → false를 반환하고, `persist`가 아니라 `merge`로 가기 때문이다.
-  `Persistable`을 구현하거나 `@Version`을 두면 없어진다. 대화방 생성 때만이라 급하지는 않다.
+- [x] **`userId`를 `X-User-Id` 헤더로 옮기고 `@CurrentUser`로 주입**
+  쿼리 파라미터로 받던 때는 신원이 URL에 실려 액세스 로그·프록시 로그·브라우저 히스토리에
+  남았다. 특히 DELETE까지 `?userId=...`가 붙었다.
+  `web/{CurrentUser, CurrentUserArgumentResolver}` + `config/WebMvcConfig`.
+  헤더가 없거나 공백이면 Spring 표준 `MissingRequestHeaderException`을 던진다.
+  이미 상속해 둔 `ResponseEntityExceptionHandler`가 400 ProblemDetail로 번역하므로
+  처리기를 새로 만들지 않았다. 검증이 없던 문제도 이걸로 닫힌다.
+  `ChatRequestDto`에서도 `userId`를 뺐다. 신원은 "무엇을 물었는가"와 다른 층위다.
+  프론트는 `authHeaders()` 하나로 네 요청 모두에 헤더를 붙인다.
+
+- [x] **`getSessions` 페이징**
+  `Page<ChatSessionDto>` 반환. `@PageableDefault(size = 50, sort = "updatedAt", DESC)`.
+  프론트는 `page.content`를 읽고, `totalElements`가 더 크면
+  "최근 50개만 표시 (전체 N개)"를 함께 보여준다. 잘린 것을 숨기지 않는다.
+
+- [x] **최근 맥락 조회의 전체 스캔 제거**
+  `loadRecentHistory`가 대화 전체를 읽어 메모리에서 마지막 10개를 자르고 있었다.
+  `findBySessionIdOrderByCreatedAtDescIdDesc(sessionId, PageRequest.of(0, 10))`로
+  필요한 만큼만 가져와 뒤집는다.
+  정렬에 `id`를 함께 쓴 이유: `createdAt`을 애플리케이션이 `LocalDateTime.now()`로 넣어서
+  같은 턴의 질문과 답변이 같은 값을 가질 수 있고, 그러면 대화가 뒤집혀 보인다.
+
+- [ ] **`getMessages`는 페이징하지 않았다 — 의도적이다**
+  대화 내역 화면은 대화 전체를 그려야 한다. 조용히 잘라내면 사용자는 앞부분이 사라진 줄
+  안다. 무한 쿼리보다 조용한 누락이 나쁘다. 제대로 하려면 "이전 대화 더 보기" 같은
+  화면 쪽 작업이 함께 필요하고, 그건 별도 과제로 남긴다.
+
+- [x] **테스트** — `contextLoads` 하나에서 12건으로. (`ChatServiceTest` 5,
+  `ChatControllerErrorHandlingTest` 6, `AiEngineRequestTransportTest` 1)
+
+- [x] **`ddl-auto: update` → Flyway**
+  `spring-boot-starter-flyway` + `V1__init_chat_schema.sql`, `ddl-auto: validate`.
+  기존 개발 DB에는 테이블이 이미 있어서 그대로 켜면
+  `Found non-empty schema(s) "public" but no schema history table`로 기동이 막힌다.
+  `baseline-on-migrate: true` + **`baseline-version: 0`** 으로 풀었다. 기본값 1이면
+  V1이 "이미 적용됨"으로 간주돼 건너뛰고, V1이 함께 만드는 인덱스가 기존 DB에는
+  생기지 않는다. 0이면 V1이 실제로 실행되고 테이블은 `IF NOT EXISTS`라 그대로 둔 채
+  인덱스만 새로 생긴다. 적용 결과:
+
+  ```
+   installed_rank | version |      description      | success
+                1 | 0       | << Flyway Baseline >> | t
+                2 | 1       | init chat schema      | t
+  ```
+
+  없던 인덱스 두 개를 같이 넣었다. 사이드바 조회용
+  `(user_id, updated_at DESC)`와, 대화 조회·삭제용 `(session_id, created_at, message_id)`.
+  FK 컬럼에 인덱스가 없으면 대화방 삭제 시 자식 테이블을 전부 훑는다.
+
+- [x] **`save(새 세션)`의 여분 SELECT 제거**
+  `ChatSession implements Persistable<String>` + `@Transient boolean isNew`.
+  `@PostPersist`/`@PostLoad`에서 false로 내린다. 이제 `persist`로 가서 INSERT만 나간다.

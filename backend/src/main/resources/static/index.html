@@ -211,6 +211,12 @@
             return userId;
         }
 
+        // 서버는 요청자를 X-User-Id 헤더로 받는다. 예전에는 쿼리 파라미터(?userId=...)로
+        // 보냈는데, 신원이 URL에 실려 액세스 로그와 브라우저 히스토리에 남았다.
+        function authHeaders(extra) {
+            return Object.assign({ 'X-User-Id': getUserId() }, extra || {});
+        }
+
         // DOM 요소
         const sessionListEl = document.getElementById('sessionList');
         const chatMessagesEl = document.getElementById('chatMessages');
@@ -268,10 +274,9 @@
             try {
                 const response = await fetch(`${API_BASE}/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({
                         sessionId: currentSessionId,
-                        userId: getUserId(),
                         query: query
                     })
                 });
@@ -312,16 +317,17 @@
             }
         });
 
-        // 3. 대화방 목록 조회 (GET /api/sessions?userId=...)
+        // 3. 대화방 목록 조회 (GET /api/sessions)
         async function loadSessions() {
             try {
-                const userId = getUserId();
-                const res = await fetch(`${API_BASE}/sessions?userId=${encodeURIComponent(userId)}`);
+                const res = await fetch(`${API_BASE}/sessions`, { headers: authHeaders() });
                 if (!res.ok) {
                     const problem = await res.json().catch(() => null);
                     throw new Error(problem?.detail || `서버 오류 (${res.status})`);
                 }
-                const sessions = await res.json();
+                // 서버가 페이지 단위로 준다. content가 이번 페이지, totalElements가 전체 개수다.
+                const page = await res.json();
+                const sessions = page.content || [];
 
                 sessionListEl.innerHTML = '<div class="text-xs font-semibold text-slate-400 uppercase tracking-wider px-3 py-2">지난 대화 목록</div>';
 
@@ -348,6 +354,14 @@
                     sessionListEl.appendChild(item);
                 });
 
+                // 잘려나간 게 있으면 숨기지 않고 알린다. 조용히 빠지면 대화가 사라진 줄 안다.
+                if (typeof page.totalElements === 'number' && page.totalElements > sessions.length) {
+                    const more = document.createElement('div');
+                    more.className = 'text-slate-500 text-xs px-3 py-2';
+                    more.textContent = `최근 ${sessions.length}개만 표시 (전체 ${page.totalElements}개)`;
+                    sessionListEl.appendChild(more);
+                }
+
             } catch (e) {
                 // 조용히 넘어가면 목록이 비어 보일 뿐이라, 사용자는 대화가 사라진 줄 안다.
                 console.error("세션 목록 로드 실패:", e);
@@ -368,7 +382,7 @@
             chatMessagesEl.innerHTML = '<div class="text-center text-slate-400 text-sm py-10"><i class="fa-solid fa-circle-notch fa-spin"></i> 과거 대화 불러오는 중...</div>';
 
             try {
-                const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages?userId=${encodeURIComponent(getUserId())}`);
+                const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, { headers: authHeaders() });
                 if (!res.ok) {
                     // 실패 응답은 배열이 아니라 ProblemDetail이다. 확인 없이 forEach를 돌면 엉뚱한 오류가 뜬다.
                     const problem = await res.json().catch(() => null);
@@ -399,7 +413,7 @@
         async function deleteSession(sessionId) {
             if (!confirm('이 대화방을 삭제하시겠습니까? (Redis 및 DB에서 모두 삭제됩니다)')) return;
             try {
-                const res = await fetch(`${API_BASE}/sessions/${sessionId}?userId=${encodeURIComponent(getUserId())}`, { method: 'DELETE' });
+                const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE', headers: authHeaders() });
                 if (!res.ok) {
                     // 확인하지 않으면 남의 대화방 삭제가 404로 거절돼도 성공한 것처럼 보인다.
                     const problem = await res.json().catch(() => null);

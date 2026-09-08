@@ -19,6 +19,10 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// 스키마는 Flyway가 소유한다. ddl-auto: update는 무엇이 언제 왜 바뀌었는지 기록을 남기지
+	// 않고, 컬럼 삭제·타입 변경은 조용히 건너뛴다. 되돌릴 수도 없다.
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
