@@ -317,7 +317,10 @@
             try {
                 const userId = getUserId();
                 const res = await fetch(`${API_BASE}/sessions?userId=${encodeURIComponent(userId)}`);
-                if (!res.ok) return;
+                if (!res.ok) {
+                    const problem = await res.json().catch(() => null);
+                    throw new Error(problem?.detail || `서버 오류 (${res.status})`);
+                }
                 const sessions = await res.json();
 
                 sessionListEl.innerHTML = '<div class="text-xs font-semibold text-slate-400 uppercase tracking-wider px-3 py-2">지난 대화 목록</div>';
@@ -346,7 +349,11 @@
                 });
 
             } catch (e) {
+                // 조용히 넘어가면 목록이 비어 보일 뿐이라, 사용자는 대화가 사라진 줄 안다.
                 console.error("세션 목록 로드 실패:", e);
+                sessionListEl.innerHTML =
+                    '<div class="text-xs font-semibold text-slate-400 uppercase tracking-wider px-3 py-2">지난 대화 목록</div>'
+                    + `<div class="text-red-400 text-xs px-3 py-2">목록을 불러오지 못했습니다: ${escapeHtml(e.message)}</div>`;
             }
         }
 
