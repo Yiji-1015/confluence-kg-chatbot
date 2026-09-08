@@ -284,7 +284,7 @@
     {
       "type": "timeseries",
       "title": "계층별 지연 분해 (p95)",
-      "description": "지연이 어느 계층에서 생기는지 답하는 핵심 패널. 1)과 2)의 차이가 backend 자체 시간, 2)와 3)+4)의 차이가 ai-server 자체 시간이다.",
+      "description": "지연이 어느 계층에서 생기는지 답하는 핵심 패널. 1)과 2)의 차이가 backend 자체 시간, 2)와 3)+4)의 차이가 ai-server 자체 시간이다. 네 계열 모두 채팅 경로(POST /api/chat → POST /internal/chat)로 한정한다. 한정하지 않으면 가벼운 목록 조회가 1)의 p95를 끌어내려 뺄셈이 음수가 된다.",
       "gridPos": {
         "h": 9,
         "w": 12,
@@ -297,8 +297,8 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"confluence-rag-chatbot-backend\",uri!~\".*actuator.*\"}[5m])))",
-          "legendFormat": "1) backend 전체",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"confluence-rag-chatbot-backend\",uri=\"/api/chat\"}[5m])))",
+          "legendFormat": "1) backend (/api/chat)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -306,7 +306,7 @@
           }
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_client_requests_seconds_bucket{application=\"confluence-rag-chatbot-backend\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_client_requests_seconds_bucket{application=\"confluence-rag-chatbot-backend\",uri=\"/internal/chat\"}[5m])))",
           "legendFormat": "2) ai-server 호출",
           "refId": "B",
           "datasource": {
