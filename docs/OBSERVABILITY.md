@@ -1,7 +1,7 @@
-# Observability (작업 중)
+# Observability
 
-계층별 모니터링 체계. **2026-09-02 기준 계측과 수집 설정은 들어갔고, Grafana 대시보드
-JSON과 검증이 남았다.** 이어서 할 일은 문서 맨 아래에 있다.
+계층별 모니터링 체계. **2026-09-08 기준 계측·수집·대시보드·검증이 모두 끝났다.**
+검증 과정에서 나온 것은 아래 "검증에서 드러난 것"에 적었다.
 
 ## 현재 시스템 구조 (실측)
 
@@ -110,13 +110,73 @@ Prometheus의 `up{job="backend"}`으로 상태를 본다.
    - 데이터소스: `Successfully queried the Prometheus API`
    - 대시보드 5종 전부 `Confluence RAG` 폴더에 provisioning으로 자동 등록됨
    - Prometheus 타겟: cadvisor UP, prometheus UP
-4. **이미지 재빌드** — ai-server(prometheus-client), backend(actuator, micrometer)
-5. **검증**
-   - `curl localhost:8000/metrics` → `rag_*` 지표가 나오는지
-   - `curl localhost:8080/actuator/prometheus` → `http_server_requests_*`가 나오는지
-   - `localhost:9090/targets` → 4개 job이 전부 UP인지
-   - 채팅 요청을 한 번 보내 Langfuse에 서빙 트레이스가 실제로 남는지 (죽어 있던 것 복구 확인)
+4. ~~이미지 재빌드~~ **완료** (2026-09-08)
+5. ~~검증~~ **완료** (2026-09-08). 결과는 아래.
+   - `localhost:8000/metrics` → `rag_*` 9종 노출 확인
+   - `localhost:8080/actuator/prometheus` → `http_server_requests_*`, `http_client_requests_*`,
+     `hikaricp_*`, `jvm_*`, `chat_history_cache_total` 확인
+   - `localhost:9090/targets` → prometheus / ai-server / backend / cadvisor **4개 전부 UP**
+   - Langfuse 키는 ai-server 컨테이너에 주입돼 있다(`jp.cloud.langfuse.com`).
+     트레이스가 대시보드에 실제로 쌓였는지는 Langfuse 콘솔에서 확인해야 한다.
 6. **문서 마무리** — 실행 방법, 대시보드별 의미, 관측 못 하는 영역
+
+## 검증에서 드러난 것
+
+타겟이 전부 UP인데도 **핵심 패널 두 개 중 하나가 비어 있었다.** 대시보드가 참조하는
+지표 이름을 Prometheus가 실제로 아는 이름과 대조해서 찾았다.
+
+### Micrometer는 기본으로 히스토그램을 내지 않는다
+
+```
+# TYPE http_server_requests_seconds summary     ← _bucket이 없다
+```
+
+Micrometer의 기본 출력은 summary(`_count` / `_sum` / `_max`)다. 그래서
+`histogram_quantile(0.95, ... _bucket)`을 쓰는 패널이 전부 No data였다.
+
+- 01 · 사용자 체감 지연 p50/p95/p99 — 전부 죽어 있었다
+- 01 · **계층별 지연 분해 (p95)** — 4개 계열 중 `backend 전체`와 `ai-server 호출` 두 개가
+  죽어 있었다. `LLM 생성`과 `ES 검색`은 ai-server 쪽 지표라 살아 있었다.
+  즉 "어디서 시간을 쓰는가"를 답해야 할 패널이, 정작 비교 대상인 backend 쪽이 없어서
+  답을 못 하고 있었다.
+- 02 · API별 p95 지연 — 죽어 있었다
+
+ai-server만 멀쩡했던 이유는 파이썬 `prometheus_client`의 `Histogram`이 `_bucket`을
+기본으로 내보내기 때문이다. 같은 "p95 패널"인데 한쪽만 살아 있어서 눈치채기 어려웠다.
+
+`application.yaml`에 히스토그램을 켰다.
+
+```yaml
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        http.client.requests: true
+      minimum-expected-value: { http.server.requests: 10ms, http.client.requests: 100ms }
+      maximum-expected-value: { http.server.requests: 10s,  http.client.requests: 60s }
+```
+
+기대 범위를 지정한 것은 버킷 수 때문이다. 지정하지 않으면 버킷이 수십 개 붙고
+그것이 (uri × method × status × outcome) 조합마다 곱해진다. 상한 60초는 AI 호출의
+read-timeout에 맞췄다.
+
+### 카운터는 처음 증가할 때 생긴다
+
+`chat_history_cache_total`이 재시작 직후에는 아예 없었다. Micrometer는 카운터가 처음
+증가하는 순간 시계열을 만든다. 게다가 `miss`는 이어쓰는 대화가 한 번 나오기 전까지
+증가할 일이 없어서, 적중률 패널이 오래 No data로 남았다.
+
+`ChatService` 생성자에서 hit/miss 두 카운터를 미리 등록해 0부터 존재하게 했다.
+**"0"과 "값이 없음"은 대시보드에서 다르게 읽힌다.** 전자는 "캐시를 안 쓰고 있다",
+후자는 "계측이 깨졌다"로 읽어야 한다.
+
+### 남아 있는 No data 하나
+
+02 · RAG 단계별 실패(`rag_stage_errors_total`)는 여전히 비어 있다. 이건 정상이다.
+파이썬 `Counter`도 라벨 조합이 처음 쓰일 때 시계열을 만드는데, 이 지표의 라벨은
+`(stage, exception)`이고 `exception`은 예외 클래스 이름이라 미리 등록할 수 없다.
+패널에서 `or vector(0)`을 붙이면 0으로 보이게 할 수는 있다.
 
 ### 실행할 때 걸리던 것
 

@@ -7,8 +7,8 @@ import com.yiji.Chatbot.dto.ChatSessionDto;
 import com.yiji.Chatbot.dto.InternalChatDto;
 import com.yiji.Chatbot.dto.SourceDocumentDto;
 import com.yiji.Chatbot.mapper.ChatMapper;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -24,15 +24,42 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ChatService {
-
-    private final MeterRegistry meterRegistry;
 
     private final ChatPersistenceService chatPersistenceService;
     private final RedisSessionService redisSessionService;
     private final AiEngineClient aiEngineClient;
     private final ChatMapper chatMapper;
+
+    /**
+     * 캐시 카운터는 시작할 때 미리 등록한다.
+     *
+     * Micrometer는 처음 증가하는 순간에 시계열을 만든다. 등록해두지 않으면 재시작 직후
+     * 대시보드의 적중률 패널이 "No data"로 뜨고, 특히 miss 쪽은 이어쓰는 대화가 한 번
+     * 나오기 전까지 아예 존재하지 않는다. "0"과 "값이 없음"은 다르게 읽힌다.
+     */
+    private final Counter historyCacheHit;
+    private final Counter historyCacheMiss;
+
+    public ChatService(MeterRegistry meterRegistry,
+                       ChatPersistenceService chatPersistenceService,
+                       RedisSessionService redisSessionService,
+                       AiEngineClient aiEngineClient,
+                       ChatMapper chatMapper) {
+        this.chatPersistenceService = chatPersistenceService;
+        this.redisSessionService = redisSessionService;
+        this.aiEngineClient = aiEngineClient;
+        this.chatMapper = chatMapper;
+        this.historyCacheHit = historyCacheCounter(meterRegistry, "hit");
+        this.historyCacheMiss = historyCacheCounter(meterRegistry, "miss");
+    }
+
+    private static Counter historyCacheCounter(MeterRegistry registry, String result) {
+        return Counter.builder("chat_history_cache")
+                .description("대화 이력 캐시 조회 결과")
+                .tag("result", result)
+                .register(registry);
+    }
 
     /**
      * 메인 채팅 질의응답 (POST /api/chat)
@@ -123,13 +150,13 @@ public class ChatService {
     private List<InternalChatDto.MessageRole> loadHistory(String sessionId) {
         List<InternalChatDto.MessageRole> cached = redisSessionService.getRecentHistory(sessionId);
         if (!cached.isEmpty()) {
-            meterRegistry.counter("chat_history_cache", "result", "hit").increment();
+            historyCacheHit.increment();
             return cached;
         }
 
         // 캐시 미스는 지연으로만 보면 원인을 알 수 없다. 미스 비율이 높다는 것은
         // Redis TTL(30분)이 실제 대화 간격보다 짧아 매 턴 DB를 때리고 있다는 뜻이다.
-        meterRegistry.counter("chat_history_cache", "result", "miss").increment();
+        historyCacheMiss.increment();
 
         List<InternalChatDto.MessageRole> recovered = chatPersistenceService.loadRecentHistory(sessionId);
         if (!recovered.isEmpty()) {

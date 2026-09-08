@@ -67,6 +67,23 @@ management:
     tags:
       # 여러 서비스 지표가 한 Prometheus에 모이므로 어느 서비스인지 라벨로 구분한다.
       application: ${spring.application.name}
+    distribution:
+      # Micrometer 기본 출력은 summary(_count/_sum/_max)라 _bucket 시계열이 없다.
+      # 그래서 대시보드의 histogram_quantile(..._bucket) 패널이 전부 No data였다.
+      # p95를 보려면 히스토그램을 켜야 한다. (ai-server는 파이썬 prometheus_client가
+      # 히스토그램을 기본으로 내보내서 04번 대시보드만 멀쩡했다.)
+      percentiles-histogram:
+        http.server.requests: true
+        http.client.requests: true
+      # 버킷 수를 기대 범위로 제한한다. 지정하지 않으면 버킷이 수십 개씩 붙어
+      # (uri × method × status × outcome) 조합마다 곱해진다.
+      minimum-expected-value:
+        http.server.requests: 10ms
+        http.client.requests: 100ms
+      maximum-expected-value:
+        http.server.requests: 10s
+        # AI 호출은 LLM 생성을 기다리므로 상한이 길다. read-timeout(60s)에 맞춘다.
+        http.client.requests: 60s
   observations:
     key-values:
       application: ${spring.application.name}
