@@ -40,3 +40,6 @@ elasticsearch/certs/
 # 연습 및 테스트용 폴더 (Git 제외)
 practice/
 .claude/
+
+# Grafana 렌더러로 뽑은 대시보드 이미지. 문서에 붙일 때만 만들고 저장소에는 두지 않는다.
+docs/images/

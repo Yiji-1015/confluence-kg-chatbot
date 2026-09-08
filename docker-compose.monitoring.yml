@@ -42,6 +42,10 @@ services:
       # 로컬 관측용이므로 가입·익명 접근을 막는다.
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
+      # 패널 이미지 렌더링을 아래 renderer 컨테이너에 위임한다.
+      # Grafana 본체에는 브라우저가 없어 /render 요청을 스스로 처리하지 못한다.
+      - GF_RENDERING_SERVER_URL=http://grafana-image-renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -51,9 +55,33 @@ services:
     mem_limit: 512m
     restart: on-failure:3
 
+  # 대시보드·패널을 PNG로 뽑는다. 문서에 붙일 이미지, 알림에 첨부할 그래프에 쓴다.
+  # 없어도 Grafana는 정상 동작한다. 화면에서 보는 데는 필요 없고 이미지 추출에만 쓰인다.
+  grafana-image-renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: rag-grafana-renderer
+    environment:
+      - RENDERING_MODE=default
+    expose:
+      - "8081"
+    mem_limit: 512m
+    restart: on-failure:3
+
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # v0.49.1은 Docker API 클라이언트가 1.41이라 최신 데몬(최소 1.44)에 거절당한다.
+    #   "Registration of the docker container factory failed: client version 1.41 is too old"
+    # 그러면 컨테이너를 인식하지 못해 name 라벨이 붙지 않고, 05번 대시보드가 통째로 빈다.
+    # 컨테이너 자체는 살아 있어 타겟은 UP으로 보이므로 눈치채기 어렵다.
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
     container_name: rag-cadvisor
+    # 버전을 올리면 Docker 인식은 되지만 이번엔 스토리지 드라이버에서 막힌다.
+    # 이 호스트는 overlayfs를 쓰는데 cAdvisor는 overlay2의 layerdb 경로를 찾는다.
+    #   "failed to identify the read-write layer ID ... layerdb/mounts/...: no such file"
+    # 그 실패 하나로 컨테이너 등록이 통째로 무산된다. 디스크 지표를 끄면 레이어 조회를
+    # 건너뛴다. 여기서 보려는 것은 CPU·메모리·네트워크라 잃는 것이 없다.
+    command:
+      - --docker_only=true
+      - --disable_metrics=disk,diskIO,advtcp,tcp,udp,sched,process,hugetlb,referenced_memory,resctrl
     privileged: true
     volumes:
       - /:/rootfs:ro

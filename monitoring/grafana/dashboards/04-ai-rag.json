@@ -84,7 +84,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (stage) (rate(rag_stage_duration_seconds_sum[5m])) / clamp_min(sum(rate(rag_stage_duration_seconds_sum[5m])), 0.001)",
+          "expr": "sum by (stage) (rate(rag_stage_duration_seconds_sum[5m])) / scalar(clamp_min(sum(rate(rag_stage_duration_seconds_sum[5m])), 0.001))",
           "legendFormat": "{{stage}}",
           "refId": "A",
           "datasource": {

@@ -293,7 +293,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(rag_retrieved_documents_bucket{le=\"0\"}[10m])) / clamp_min(sum(rate(rag_retrieved_documents_count[10m])), 0.001)",
+          "expr": "sum(rate(rag_retrieved_documents_bucket{le=\"0.0\"}[10m])) / clamp_min(sum(rate(rag_retrieved_documents_count[10m])), 0.001)",
           "legendFormat": "0건 비율",
           "refId": "A",
           "datasource": {
