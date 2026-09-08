@@ -1,27 +1,26 @@
 package com.yiji.Chatbot.service;
 
-import com.yiji.Chatbot.dto.*;
-import com.yiji.Chatbot.entity.ChatMessage;
-import com.yiji.Chatbot.entity.ChatSession;
-import com.yiji.Chatbot.exception.SessionNotFoundException;
+import com.yiji.Chatbot.dto.ChatMessageDto;
+import com.yiji.Chatbot.dto.ChatRequestDto;
+import com.yiji.Chatbot.dto.ChatResponseDto;
+import com.yiji.Chatbot.dto.ChatSessionDto;
+import com.yiji.Chatbot.dto.InternalChatDto;
+import com.yiji.Chatbot.dto.SourceDocumentDto;
 import com.yiji.Chatbot.mapper.ChatMapper;
-import com.yiji.Chatbot.repository.ChatMessageRepository;
-import com.yiji.Chatbot.repository.ChatSessionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
- * 전체 채팅 비즈니스 로직 오케스트레이션 서비스
- * - 세션 발급/관리 -> Redis 멀티턴 맥락 조회 -> Python AI 호출 -> Redis & JPA 영속화
+ * 채팅 흐름 오케스트레이션 서비스
+ * - 세션 확인/발급 -> Redis 멀티턴 맥락 조회 -> Python AI 호출 -> 영속화
+ *
+ * DB 접근은 전부 ChatPersistenceService에 있다. 이 클래스는 순서만 정한다.
  */
 @Slf4j
 @Service
@@ -30,86 +29,48 @@ public class ChatService {
 
     private final MeterRegistry meterRegistry;
 
-    private final ChatSessionRepository chatSessionRepository;
-    private final ChatMessageRepository chatMessageRepository;
+    private final ChatPersistenceService chatPersistenceService;
     private final RedisSessionService redisSessionService;
     private final AiEngineClient aiEngineClient;
     private final ChatMapper chatMapper;
 
     /**
-     * 메인 채팅 질의응답 처리 메서드 (POST /api/chat)
+     * 메인 채팅 질의응답 (POST /api/chat)
+     *
+     * 이 메서드에 @Transactional이 없는 것은 의도한 것이다.
+     * AI 호출은 최대 60초가 걸리는데, 트랜잭션 안에서 부르면 그동안 DB 커넥션 하나가
+     * 아무 일도 하지 않으면서 묶여 있는다. HikariCP 기본 풀이 10개라 동시 사용자 11명이면
+     * 나머지는 커넥션을 기다리다 30초 뒤 실패한다. AI 서버가 느려지는 순간 그 여파가
+     * 채팅과 무관한 API까지 번진다.
+     *
+     * 그래서 DB를 만지는 구간만 ChatPersistenceService의 짧은 트랜잭션으로 나눠 두고,
+     * AI 호출은 그 밖에 둔다.
      */
-    @Transactional
     public ChatResponseDto processChat(ChatRequestDto requestDto) {
-        String query = requestDto.getQuery().trim();
-        String sessionId = requestDto.getSessionId();
-        String userId = requestDto.getUserId();
+        String query = requestDto.query().trim();
+        String userId = requestDto.userId();
 
-        // 1. 대화방(Session) 식별 또는 신규 생성
-        ChatSession session;
-        if (sessionId == null || sessionId.isBlank()) {
-            sessionId = UUID.randomUUID().toString();
-            String initialTitle = generateTitleFromQuery(query);
-            session = ChatSession.builder()
-                    .id(sessionId)
-                    .userId(userId)
-                    .title(initialTitle)
-                    .build();
-            chatSessionRepository.save(session);
-            log.info("[ChatService] 새 대화방 생성 (sessionId: {}, userId: {}, title: '{}')", sessionId, userId, initialTitle);
-        } else {
-            String finalSessionId = sessionId;
-            session = chatSessionRepository.findById(sessionId)
-                    .map(found -> requireOwner(found, userId))
-                    .orElseGet(() -> {
-                        ChatSession newSession = ChatSession.builder()
-                                .id(finalSessionId)
-                                .userId(userId)
-                                .title(generateTitleFromQuery(query))
-                                .build();
-                        return chatSessionRepository.save(newSession);
-                    });
-            session.updateTimestamp();
-        }
+        // 1. 이어쓸 수 있는 대화방인지 확인한다. 아니면 서버가 새 ID를 발급한다.
+        //    (예전에는 클라이언트가 준 ID로 없는 대화방을 만들어줬다. 서버가 ID 발급을 통제하지 못했다.)
+        boolean continuing = chatPersistenceService.canContinue(requestDto.sessionId(), userId);
+        String sessionId = continuing ? requestDto.sessionId() : issueSessionId(requestDto.sessionId());
 
-        // 2. Redis에서 해당 대화방의 최근 멀티턴 대화 기록 조회 (만료 시 DB에서 복구하는 Cache-Aside 적용)
-        List<InternalChatDto.MessageRole> history = redisSessionService.getRecentHistory(sessionId);
-        if (history.isEmpty()) {
-            // 캐시 미스는 지연으로만 보면 원인을 알 수 없다. 미스 비율이 높다는 것은
-            // Redis TTL(30분)이 실제 대화 간격보다 짧아 매 턴 DB를 때리고 있다는 뜻이다.
-            meterRegistry.counter("chat_history_cache", "result", "miss").increment();
-            history = recoverHistoryFromDb(sessionId);
-        } else {
-            meterRegistry.counter("chat_history_cache", "result", "hit").increment();
-        }
+        // 2. 이어쓰는 대화만 히스토리를 읽는다. 새 대화방은 조회할 것이 없다.
+        List<InternalChatDto.MessageRole> history = continuing ? loadHistory(sessionId) : List.of();
 
-        // 3. Python AI Engine 호출 (하이브리드 검색 + LiteLLM 답변 생성)
+        // 3. Python AI Engine 호출 (트랜잭션 밖). 실패하면 AiEngineException이 올라가고
+        //    아무것도 저장되지 않는다.
         InternalChatDto.Response aiResponse = aiEngineClient.requestChat(sessionId, query, history);
 
-        String answer = aiResponse.getAnswer();
-        List<SourceDocumentDto> sources = chatMapper.toSourceDtoList(aiResponse.getSources());
-        String sourcesJson = chatMapper.sourcesToJson(sources);
+        String answer = aiResponse.answer();
+        List<SourceDocumentDto> sources = chatMapper.toSourceDtoList(aiResponse.sources());
 
-        // 4. Redis에 새로운 대화 턴(사용자 질문 + AI 답변) 저장 & 30분 TTL 갱신
+        // 4. 질문과 답변을 한 트랜잭션에 저장한 뒤 Redis를 갱신한다.
+        //    순서가 중요하다. Redis는 JPA 트랜잭션에 참여하지 않으므로 Redis를 먼저 쓰면
+        //    DB가 롤백돼도 Redis에는 남아 다음 턴의 LLM 컨텍스트가 오염된다.
+        chatPersistenceService.saveTurn(sessionId, userId, query, answer, chatMapper.sourcesToJson(sources));
         redisSessionService.saveTurn(sessionId, query, answer);
 
-        // 5. JPA로 PostgreSQL에 영구 대화 기록 저장 (질문 + 답변)
-        ChatMessage userMsg = ChatMessage.builder()
-                .session(session)
-                .role("USER")
-                .content(query)
-                .build();
-        chatMessageRepository.save(userMsg);
-
-        ChatMessage assistantMsg = ChatMessage.builder()
-                .session(session)
-                .role("ASSISTANT")
-                .content(answer)
-                .sourcesJson(sourcesJson)
-                .build();
-        chatMessageRepository.save(assistantMsg);
-
-        // 6. 최종 응답 DTO 반환
         return ChatResponseDto.builder()
                 .sessionId(sessionId)
                 .answer(answer)
@@ -119,93 +80,64 @@ public class ChatService {
     }
 
     /**
-     * 전체 대화방 목록 최신순 조회 (사용자별 필터링 지원)
+     * 전체 대화방 목록 최신순 조회
      */
-    @Transactional(readOnly = true)
     public List<ChatSessionDto> getSessions(String userId) {
-        return chatSessionRepository.findAllByUserIdOrderByUpdatedAtDesc(userId).stream()
-                .map(chatMapper::toSessionDto)
-                .collect(Collectors.toList());
+        return chatPersistenceService.getSessions(userId);
     }
 
     /**
-     * 특정 대화방의 과거 전체 메시지 내역 조회 (본인 대화방만)
+     * 특정 대화방의 과거 전체 메시지 내역 조회
      */
-    @Transactional(readOnly = true)
     public List<ChatMessageDto> getMessages(String sessionId, String userId) {
-        requireOwnedSession(sessionId, userId);
-        return chatMessageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId).stream()
-                .map(chatMapper::toMessageDto)
-                .collect(Collectors.toList());
+        return chatPersistenceService.getMessages(sessionId, userId);
     }
 
     /**
-     * 대화방 삭제 (본인 대화방만, Redis 세션 및 RDB 데이터 안전 삭제)
+     * 대화방 삭제
+     *
+     * DB 삭제가 커밋된 뒤에 Redis를 지운다. 반대로 하면 DB 삭제가 실패했을 때
+     * 대화방은 남았는데 맥락만 사라진 상태가 된다. 이 순서라면 Redis 삭제가 실패해도
+     * 남는 것은 갈 곳 없는 캐시뿐이고 TTL 30분이면 사라진다.
      */
-    @Transactional
     public void deleteSession(String sessionId, String userId) {
-        requireOwnedSession(sessionId, userId);
+        chatPersistenceService.deleteSession(sessionId, userId);
         redisSessionService.clearSession(sessionId);
-        chatSessionRepository.deleteById(sessionId);
-        log.info("[ChatService] 대화방 삭제 완료 (sessionId: {})", sessionId);
     }
 
     /**
-     * 대화방을 조회하면서 요청한 사용자의 것인지 확인한다.
-     * userId는 브라우저 localStorage의 익명 ID라 인증은 아니지만,
-     * sessionId만 알면 남의 대화를 읽고 지울 수 있던 구멍은 막는다.
+     * 대화방 ID는 서버가 발급한다.
      */
-    private ChatSession requireOwnedSession(String sessionId, String userId) {
-        return chatSessionRepository.findById(sessionId)
-                .map(session -> requireOwner(session, userId))
-                .orElseThrow(() -> new SessionNotFoundException(sessionId));
-    }
-
-    private ChatSession requireOwner(ChatSession session, String userId) {
-        if (!Objects.equals(session.getUserId(), userId)) {
-            // 소유자가 달라도 "없음"으로 취급한다. 403으로 답하면 그 대화방이 존재한다는 사실이 새어나간다.
-            // 404로의 번역은 GlobalExceptionHandler가 맡는다. 서비스는 상태 코드를 모른다.
-            log.warn("[ChatService] 소유자가 아닌 대화방 접근 차단 (sessionId: {}, userId: {})", session.getId(), userId);
-            throw new SessionNotFoundException(session.getId());
+    private String issueSessionId(String requested) {
+        String issued = UUID.randomUUID().toString();
+        if (requested != null && !requested.isBlank()) {
+            log.info("[ChatService] 알 수 없는 sessionId를 받아 새 대화방을 발급한다 (요청: {}, 발급: {})",
+                    requested, issued);
         }
-        return session;
+        return issued;
     }
 
     /**
-     * Redis 캐시 만료 시 PostgreSQL 영구 대화 기록에서 최근 대화 히스토리 복원 (최근 5턴 = 10개)
+     * 최근 대화 맥락을 읽는다. Redis가 비었으면 DB에서 복원하고 캐시를 채운다(Cache-Aside).
      */
-    private List<InternalChatDto.MessageRole> recoverHistoryFromDb(String sessionId) {
-        List<ChatMessage> dbMessages = chatMessageRepository.findAllBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (dbMessages.isEmpty()) {
-            return List.of();
+    private List<InternalChatDto.MessageRole> loadHistory(String sessionId) {
+        List<InternalChatDto.MessageRole> cached = redisSessionService.getRecentHistory(sessionId);
+        if (!cached.isEmpty()) {
+            meterRegistry.counter("chat_history_cache", "result", "hit").increment();
+            return cached;
         }
 
-        int maxMessages = 10;
-        int startIndex = Math.max(0, dbMessages.size() - maxMessages);
-        List<ChatMessage> recentMessages = dbMessages.subList(startIndex, dbMessages.size());
+        // 캐시 미스는 지연으로만 보면 원인을 알 수 없다. 미스 비율이 높다는 것은
+        // Redis TTL(30분)이 실제 대화 간격보다 짧아 매 턴 DB를 때리고 있다는 뜻이다.
+        meterRegistry.counter("chat_history_cache", "result", "miss").increment();
 
-        List<InternalChatDto.MessageRole> history = recentMessages.stream()
-                .map(msg -> InternalChatDto.MessageRole.builder()
-                        .role(msg.getRole().toLowerCase()) // "user" or "assistant"
-                        .content(msg.getContent())
-                        .build())
-                .collect(Collectors.toList());
-
-        if (!history.isEmpty()) {
-            redisSessionService.saveHistory(sessionId, history);
-            log.info("[ChatService] DB 대화 기록에서 Redis 히스토리 복원 완료 (sessionId: {}, count: {})", sessionId, history.size());
+        List<InternalChatDto.MessageRole> recovered = chatPersistenceService.loadRecentHistory(sessionId);
+        if (!recovered.isEmpty()) {
+            // 트랜잭션 밖에서 채운다. 실패해도 다음 턴에 다시 시도할 뿐이다.
+            redisSessionService.saveHistory(sessionId, recovered);
+            log.info("[ChatService] DB 대화 기록에서 Redis 히스토리 복원 (sessionId: {}, count: {})",
+                    sessionId, recovered.size());
         }
-
-        return history;
-    }
-
-    /**
-     * 첫 질문 내용으로 대화방 요약 제목 생성 (최대 30자)
-     */
-    private String generateTitleFromQuery(String query) {
-        if (query == null || query.isBlank()) {
-            return "새로운 대화";
-        }
-        return query.length() > 30 ? query.substring(0, 30) + "..." : query;
+        return recovered;
     }
 }

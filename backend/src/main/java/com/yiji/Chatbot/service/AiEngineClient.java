@@ -37,7 +37,7 @@ public class AiEngineClient {
                 .build();
 
         log.info("[AiEngineClient] AI 서버 호출 시작 (sessionId: {}, query: '{}', historySize: {})",
-                sessionId, query, request.getHistory().size());
+                sessionId, query, request.history().size());
 
         InternalChatDto.Response response;
         try {
@@ -58,7 +58,7 @@ public class AiEngineClient {
         }
 
         log.info("[AiEngineClient] AI 서버 응답 성공 (sourcesCount: {})",
-                response.getSources() != null ? response.getSources().size() : 0);
+                response.sources() != null ? response.sources().size() : 0);
         return response;
     }
 }

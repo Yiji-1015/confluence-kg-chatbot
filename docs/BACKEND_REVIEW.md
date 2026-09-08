@@ -124,7 +124,41 @@ processChat (트랜잭션 없음)
 함께 풀린다. `redisSessionService.saveTurn`(`:95`)과, 캐시 미스 경로의
 `recoverHistoryFromDb` → `saveHistory`(`:195`)다. 두 번째를 빠뜨리기 쉽다.
 
-- [ ] 적용
+- [x] 적용 (2026-09-08)
+
+`ChatPersistenceService`를 새로 만들어 DB 접근을 전부 옮겼다. `ChatService`에는
+`@Transactional`이 하나도 남지 않았고 순서만 정한다. 별도 빈이라 프록시를 지나므로
+self-invocation 문제가 생기지 않는다.
+
+**위 스케치와 다르게 갔다.** 스케치대로 `prepareSession`에서 USER 메시지를 먼저
+저장하면 두 가지가 깨진다.
+
+- 히스토리 복원이 방금 저장한 그 질문을 포함하게 된다. 원래 코드는 USER 메시지를
+  히스토리 조회 *뒤에* 저장했는데, 앞으로 당기면 순서가 뒤집힌다.
+- 소유권 확인보다 Redis 히스토리 읽기가 먼저 오면 안 된다. 남의 sessionId를 넣어
+  그 사람의 대화 맥락을 LLM 컨텍스트로 받아볼 수 있다.
+
+실제로 간 구조:
+
+```
+processChat (트랜잭션 없음)
+ ├─ canContinue(...)   @Transactional(readOnly)  ← 소유권 확인만. 없으면 서버가 새 ID 발급
+ ├─ Redis 히스토리 조회, 미스면 loadRecentHistory(...)  @Transactional(readOnly)
+ ├─ aiEngineClient.requestChat(...)               ← 트랜잭션 밖
+ └─ saveTurn(...)      @Transactional  ← 세션 생성/갱신 + USER + ASSISTANT 한 번에
+    그 다음 redisSessionService.saveTurn(...)     ← 트랜잭션 밖
+```
+
+AI 호출 전에는 DB에 아무것도 쓰지 않는다. 실패하면 흔적이 남지 않아 3번의 결과가
+유지된다. 질문과 답변을 한 트랜잭션에 묶었으므로 "질문만 남는" 반쪽 대화도 없다.
+
+대가로 `findById`가 두 번 나간다(`canContinue`, `saveTurn`). 밀리초짜리 조회 두 번과
+60초 커넥션 점유를 맞바꾼 것이다.
+
+지표 하나가 달라졌다. `chat_history_cache`의 miss가 이제 이어쓰는 대화에서만 올라간다.
+예전에는 새 대화방도 무조건 miss로 집계돼 비율이 부풀려져 있었다.
+
+`ChatServiceTest` 5건으로 순서를 고정했다(DB→Redis, AI 실패 시 무저장, 삭제 순서 등).
 
 ## 5. Jackson 2와 3이 섞여 있다
 
@@ -165,7 +199,12 @@ Jackson 3가 java.time을 기본 내장하고 타임스탬프도 기본 비활�
   Jackson 3는 checked exception이 사라졌으므로 `try-catch (Exception)` 부분을 다시 본다.
 - 웹 계층 설정이 필요해지면 `spring.jackson.*` 또는 `JsonMapperBuilderCustomizer`로.
 
-- [ ] 적용
+- [x] 적용 (2026-09-08)
+  - `RedisConfig`의 `ObjectMapper` 빈과 `build.gradle`의 Jackson 2 두 줄 삭제.
+  - `ChatMapper`, `RedisSessionService`를 `tools.jackson.databind.ObjectMapper`로 전환.
+    Boot가 자동 구성한 `JsonMapper` 빈이 그대로 주입된다.
+  - `catch (Exception)`을 `catch (JacksonException)`으로 좁혔다. Jackson 3의 예외는
+    `RuntimeException` 상속이라 잡지 않으면 그대로 올라간다.
 
 ## 6. `@CrossOrigin(origins = "*")` 하드코딩
 
@@ -175,7 +214,7 @@ Jackson 3가 java.time을 기본 내장하고 타임스탬프도 기본 비활�
 나중에 프론트를 분리하면 `WebMvcConfigurer#addCorsMappings`에서 설정값으로 받는다.
 컨트롤러에 와일드카드를 박아두면 인증 쿠키를 붙이는 순간 `allowCredentials`와 충돌한다.
 
-- [ ] 적용
+- [x] 적용 (2026-09-08). 삭제했고 프론트는 그대로 동작한다(동일 출처라 예상대로).
 
 ## 7. RestClient 타임아웃을 Boot 관례 밖에서 설정한다
 
@@ -191,10 +230,45 @@ Jackson 3가 java.time을 기본 내장하고 타임스탬프도 기본 비활�
 
 `@Value` 필드 두 개도 `@ConfigurationProperties`가 제자리다. 값이 늘면 더 그렇다.
 
-바꿀 방향: 타임아웃은 `spring.http.client.*`(또는 `RestClientCustomizer`)로 옮기고
+바꿀 방향: 타임아웃은 `spring.http.clients.*`(또는 `RestClientCustomizer`)로 옮기고
 `AiClientConfig`는 `baseUrl`만 잡는다.
 
-- [ ] 적용
+> 속성 이름 정정: `spring.http.client.*`(단수)는 Boot 4.0에서 이미 폐기됐다.
+> 정식 이름은 `spring.http.clients.*`(복수)다. `spring-boot-http-client`의
+> 설정 메타데이터에 replacement로 명시돼 있다.
+
+- [x] 적용 (2026-09-08)
+  - 타임아웃을 `spring.http.clients.connect-timeout` / `read-timeout`으로 옮겼다.
+  - `AiClientConfig`는 `baseUrl`만 잡는다. `@Value` 두 개는 `AiEngineProperties`
+    (`@ConfigurationProperties` record)로 바꿨다.
+
+### 여기서 앱이 깨졌다 — 기록해둔다
+
+`requestFactory()`를 떼고 Boot 기본에 맡겼더니 **AI 호출이 전부 422로 실패했다.**
+직렬화도 URL도 멀쩡한데 ai-server는 "본문 없음"을 받았다.
+
+```
+{"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null}]}
+```
+
+원인은 전송 구현이 바뀐 것이다. Boot 4의 기본 선택은 JDK `HttpClient`인데, 이건
+**HTTP/2가 기본**이라 평문 연결에서 h2c 업그레이드를 시도한다
+(`Connection: Upgrade`, `HTTP2-Settings`). ai-server의 uvicorn(h11)은 HTTP/1.1 전용이라
+업그레이드를 거절하고, 그 과정에서 본문이 사라진다. uvicorn 로그에 남는 흔적:
+
+```
+WARNING:  Unsupported upgrade request.
+WARNING:  Invalid HTTP request received.
+```
+
+`spring.http.clients.imperative.factory: simple`로 HTTP/1.1 전송을 명시했다.
+`AiEngineRequestTransportTest`가 요청 헤더에 `Upgrade`/`HTTP2-Settings`가 없는지
+확인한다. 일부러 `jdk`로 되돌려 이 테스트가 실제로 실패하는 것까지 확인했다.
+
+**교훈:** "Boot 기본에 맡긴다"는 타임아웃 설정만 옮기는 게 아니라 전송 구현 선택까지
+넘기는 일이다. 상대 서버가 HTTP/1.1 전용이면 그게 그대로 장애가 된다. 원래 코드가
+`SimpleClientHttpRequestFactory`를 박아둔 것은 관례 위반이 맞지만, 그 부작용으로
+전송이 HTTP/1.1에 고정돼 있어 문제가 드러나지 않았던 것이다.
 
 ## 8. 잔손질
 
@@ -206,7 +280,15 @@ Jackson 3가 java.time을 기본 내장하고 타임스탬프도 기본 비활�
 - `processChat`에서 존재하지 않는 `sessionId`가 오면 클라이언트가 준 ID로 새 세션을
   만든다(`orElseGet`). 서버가 ID 발급을 통제하지 못하는 구조.
 
-- [ ] 적용
+- [x] 적용 (2026-09-08)
+  - 와일드카드 import 정리, `ResponseEntity<List<...>>` → `List<...>`.
+    `deleteSession`의 `noContent()`는 유지.
+  - DTO 6종을 `record`로 전환. 생성 지점이 많은 것들은 Lombok `@Builder`를 유지해
+    호출부를 그대로 뒀다(`ChatRequestDto`는 역직렬화 전용이라 빌더 없음).
+    Jackson 3와 Hibernate Validator 모두 record를 그대로 처리한다.
+  - 알 수 없는 `sessionId`가 오면 그 ID를 쓰지 않고 서버가 새로 발급한다.
+    404로 거절하는 방법도 있지만, 그러면 localStorage에 오래된 ID가 남은 사용자가
+    대화를 시작하지 못한다. 응답의 `sessionId`를 프론트가 갱신하므로 끊김은 없다.
 
 ## 9. 나중에
 
@@ -221,3 +303,7 @@ Jackson 3가 java.time을 기본 내장하고 타임스탬프도 기본 비활�
 - 테스트가 `contextLoads` 하나뿐. `spring-boot-starter-webmvc-test`가 이미 있으니
   `@WebMvcTest`로 컨트롤러 검증 추가.
 - `ddl-auto: update` → Flyway. (MVC 관례와는 별개 사안)
+- `chatSessionRepository.save(새 세션)`이 INSERT 전에 SELECT를 한 번 더 낸다.
+  `ChatSession`은 `@Id`가 직접 할당된 String이고 `@Version`이 없어서 Spring Data의
+  `isNew()`가 `id != null` → false를 반환하고, `persist`가 아니라 `merge`로 가기 때문이다.
+  `Persistable`을 구현하거나 `@Version`을 두면 없어진다. 대화방 생성 때만이라 급하지는 않다.

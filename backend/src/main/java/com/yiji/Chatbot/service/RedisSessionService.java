@@ -1,12 +1,13 @@
 package com.yiji.Chatbot.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yiji.Chatbot.dto.InternalChatDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -58,7 +59,7 @@ public class RedisSessionService {
             }
             return history;
 
-        } catch (Exception e) {
+        } catch (JacksonException e) {
             log.warn("[RedisSession] 세션 역직렬화 실패 (sessionId: {}): {}", sessionId, e.getMessage());
             return Collections.emptyList();
         }
@@ -90,7 +91,7 @@ public class RedisSessionService {
             // Redis에 저장하며 30분 TTL 자동 연장 (Sliding Expiration)
             redisTemplate.opsForValue().set(key, json, SESSION_TTL_MINUTES, TimeUnit.MINUTES);
             log.debug("[RedisSession] 세션 갱신 성공 (sessionId: {}, messageCount: {})", sessionId, history.size());
-        } catch (Exception e) {
+        } catch (JacksonException e) {
             log.error("[RedisSession] 세션 저장 실패 (sessionId: {}): {}", sessionId, e.getMessage());
         }
     }
@@ -113,7 +114,7 @@ public class RedisSessionService {
             String json = objectMapper.writeValueAsString(trimmed);
             redisTemplate.opsForValue().set(key, json, SESSION_TTL_MINUTES, TimeUnit.MINUTES);
             log.info("[RedisSession] DB 히스토리로 Redis 워밍업 완료 (sessionId: {}, messageCount: {})", sessionId, trimmed.size());
-        } catch (Exception e) {
+        } catch (JacksonException e) {
             log.error("[RedisSession] 세션 워밍업 저장 실패 (sessionId: {}): {}", sessionId, e.getMessage());
         }
     }

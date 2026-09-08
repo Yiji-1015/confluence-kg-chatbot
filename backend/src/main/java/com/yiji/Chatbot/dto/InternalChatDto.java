@@ -1,57 +1,49 @@
 package com.yiji.Chatbot.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
 
 import java.util.List;
 
 /**
- * Python AI Engine (POST /internal/chat) 통신 전용 DTO 클래스 모음
+ * Python AI Engine (POST /internal/chat) 통신 전용 DTO 모음
  */
 public class InternalChatDto {
 
-    @Getter
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class MessageRole {
-        private String role;    // "user" 또는 "assistant"
-        private String content; // 대화 내용
+    private InternalChatDto() {
     }
 
-    @Getter
+    /**
+     * @param role "user" 또는 "assistant"
+     */
     @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class Request {
-        private String sessionId;
-        private String query;
-        private List<MessageRole> history;
-        private String model;
+    public record MessageRole(String role, String content) {
     }
 
-    @Getter
     @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class SourceDocument {
-        private String documentId;
-        private String title;
-        private String url;
-        private String author;
-        private String category;
-        private Double score;
+    public record Request(
+            String sessionId,
+            String query,
+            List<MessageRole> history,
+            String model
+    ) {
     }
 
-    @Getter
     @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class Response {
-        private String sessionId;
-        private String answer;
-        private List<SourceDocument> sources;
+    public record SourceDocument(
+            String documentId,
+            String title,
+            String url,
+            String author,
+            String category,
+            Double score
+    ) {
+    }
+
+    @Builder
+    public record Response(
+            String sessionId,
+            String answer,
+            List<SourceDocument> sources
+    ) {
     }
 }

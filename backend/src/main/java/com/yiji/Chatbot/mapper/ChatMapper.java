@@ -1,7 +1,5 @@
 package com.yiji.Chatbot.mapper;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yiji.Chatbot.dto.ChatMessageDto;
 import com.yiji.Chatbot.dto.ChatSessionDto;
 import com.yiji.Chatbot.dto.InternalChatDto;
@@ -9,16 +7,20 @@ import com.yiji.Chatbot.dto.SourceDocumentDto;
 import com.yiji.Chatbot.entity.ChatMessage;
 import com.yiji.Chatbot.entity.ChatSession;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Entity와 DTO 간의 변환을 담당하는 Mapper 컴포넌트
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class ChatMapper {
@@ -69,13 +71,13 @@ public class ChatMapper {
         }
         return internalDocs.stream()
                 .map(doc -> SourceDocumentDto.builder()
-                        .title(doc.getTitle())
-                        .url(doc.getUrl())
-                        .author(doc.getAuthor())
-                        .category(doc.getCategory())
-                        .score(doc.getScore())
+                        .title(doc.title())
+                        .url(doc.url())
+                        .author(doc.author())
+                        .category(doc.category())
+                        .score(doc.score())
                         .build())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**
@@ -87,7 +89,10 @@ public class ChatMapper {
         }
         try {
             return objectMapper.writeValueAsString(sources);
-        } catch (Exception e) {
+        } catch (JacksonException e) {
+            // Jackson 3의 예외는 unchecked라 잡지 않으면 그대로 올라간다.
+            // 출처 목록은 답변의 부가 정보이므로 여기서 끊고 답변은 살린다.
+            log.warn("[ChatMapper] 출처 직렬화 실패: {}", e.getMessage());
             return null;
         }
     }
@@ -101,7 +106,8 @@ public class ChatMapper {
         }
         try {
             return objectMapper.readValue(json, new TypeReference<List<SourceDocumentDto>>() {});
-        } catch (Exception e) {
+        } catch (JacksonException e) {
+            log.warn("[ChatMapper] 저장된 출처 JSON 역직렬화 실패: {}", e.getMessage());
             return new ArrayList<>();
         }
     }

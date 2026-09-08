@@ -71,13 +71,108 @@
 연결 거부·타임아웃·역직렬화 오류까지 모두 그 아래에 있다. 그 밖의 예외(요청 조립 중
 NPE 등)는 AI 엔진 장애가 아니므로 502로 뭉뚱그리지 않고 500으로 내보낸다.
 
-부수 효과: 이제 AI 호출이 실패하면 `processChat`의 트랜잭션이 롤백돼 세션과 USER 메시지도
-저장되지 않는다. 실패한 턴이 흔적을 남기지 않는 쪽이 맞다고 봤다. 다만 이 구조는
-BACKEND_REVIEW 4번(외부 호출을 트랜잭션 밖으로)에서 다시 바뀐다. 그때는 USER 메시지를
-먼저 커밋하므로 저장 여부가 달라진다.
+부수 효과: 이제 AI 호출이 실패하면 아무것도 저장되지 않는다. 실패한 턴이 흔적을 남기지
+않는 쪽이 맞다고 봤다. 아래 트랜잭션 경계 변경에서도 이 성질은 유지된다
+(AI 호출 전에는 DB에 쓰지 않고, 질문과 답변을 한 트랜잭션에 함께 저장한다).
 
 기존 오염 데이터는 정리할 것이 없었다. `chatbot_db`의 `chat_messages`와 `chat_sessions`가
 모두 0행이라 조회만 하고 DELETE는 실행하지 않았다.
+
+### 트랜잭션 경계를 DB 작업 구간으로 좁힘
+
+`processChat` 전체가 하나의 `@Transactional`이었고 그 안에서 AI 서버를 호출했다.
+AI 호출은 최대 60초다. 그동안 DB 커넥션 하나가 아무 일도 하지 않으면서 묶여 있었다.
+HikariCP 기본 풀은 10개, 커넥션 대기 타임아웃은 30초다. 동시 사용자 11명이면 11번째부터
+30초를 기다리다 `SQLTransientConnectionException`을 받는다. 톰캣 스레드는 200개까지
+요청을 받아들이므로, AI 서버가 느려지는 순간 그 여파가 커넥션 고갈로 번져 채팅과 무관한
+대화방 목록 조회까지 같이 죽는다. 부하에서 가장 먼저 무너질 지점이었다.
+
+`ChatPersistenceService`를 새로 만들어 DB 접근을 전부 옮겼다. `ChatService`에는
+`@Transactional`이 하나도 없고 순서만 정한다.
+
+별도 빈으로 나눈 것은 취향이 아니라 필요다. `@Transactional`은 프록시로 동작해서
+같은 클래스 안에서 `this.method()`로 부르면 프록시를 지나지 않아 트랜잭션이 아예 걸리지
+않는다(self-invocation). 어노테이션은 그대로인데 동작만 조용히 사라지므로 눈에 띄지 않는다.
+
+순서는 이렇게 정했다.
+
+```
+processChat (트랜잭션 없음)
+ ├─ canContinue(...)   @Transactional(readOnly)  ← 소유권 확인. 없으면 서버가 새 ID 발급
+ ├─ Redis 히스토리 조회, 미스면 loadRecentHistory(...)  @Transactional(readOnly)
+ ├─ aiEngineClient.requestChat(...)               ← 트랜잭션 밖
+ └─ saveTurn(...)      @Transactional  ← 세션 + USER + ASSISTANT 한 번에
+    그 다음 redisSessionService.saveTurn(...)     ← 트랜잭션 밖
+```
+
+두 가지를 지키느라 이 순서가 됐다.
+
+- 소유권 확인이 Redis 히스토리 읽기보다 **먼저**여야 한다. 뒤집히면 남의 sessionId를
+  넣어 그 사람의 대화 맥락을 LLM 컨텍스트로 받아볼 수 있다.
+- USER 메시지 저장은 히스토리 조회보다 **나중**이어야 한다. 앞으로 당기면 방금 저장한
+  질문이 자기 자신의 맥락으로 다시 들어간다.
+
+DB를 먼저 쓰고 Redis를 나중에 쓴다. Redis는 JPA 트랜잭션에 참여하지 않으므로 순서가
+반대면 DB가 롤백돼도 Redis에는 남아 다음 턴 컨텍스트가 오염된다. 대화방 삭제도 같은
+이유로 DB 커밋 뒤에 Redis를 지운다.
+
+대가로 `findById`가 두 번 나간다. 밀리초짜리 조회 두 번과 60초 커넥션 점유를 맞바꿨다.
+
+`chat_history_cache` 지표의 의미가 달라졌다. miss가 이어쓰는 대화에서만 올라간다.
+예전에는 새 대화방도 무조건 miss로 집계돼 비율이 부풀려져 있었다.
+
+### Jackson 2 제거 (Boot 4의 기본은 Jackson 3)
+
+`RedisConfig`가 Jackson 2 `ObjectMapper` 빈을 등록하고 `JavaTimeModule`을 붙이고 있었다.
+그런데 Boot 4의 JSON 기본은 Jackson 3(`tools.jackson`)라 그 빈은 웹 계층에 닿지 못했다.
+API 응답의 `LocalDateTime`이 제대로 나온 것은 Jackson 3가 java.time을 기본 내장하기
+때문이지 이 설정 덕분이 아니었다. 즉 설정은 있는데 효과는 없고, 읽는 사람은 있다고 믿는
+상태였다.
+
+빈과 의존성 두 줄을 지우고 `ChatMapper`·`RedisSessionService`를 Jackson 3로 옮겼다.
+Jackson 3는 `JsonMapper extends ObjectMapper`라 Boot가 자동 구성한 빈이 그대로 주입된다.
+예외가 unchecked로 바뀌었으므로 `catch (Exception)`을 `catch (JacksonException)`으로 좁혔다.
+
+### RestClient 타임아웃을 Boot 관례 자리로 (그리고 그 과정에서 만난 함정)
+
+`AiClientConfig`가 `SimpleClientHttpRequestFactory`를 직접 만들어 타임아웃을 넣고 있었다.
+Boot 4에서 그 자리는 `spring.http.clients.*` 속성이고, 팩토리를 직접 지정하면 그 속성이
+무시된다. 속성으로 옮기고 `AiClientConfig`는 `baseUrl`만 잡게 했다.
+(`spring.http.client.*` 단수형은 Boot 4.0에서 이미 폐기됐다. 복수형이 정식이다.)
+
+**그랬더니 AI 호출이 전부 422로 실패했다.** ai-server가 "본문 없음"을 받았다.
+
+```
+{"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null}]}
+```
+
+`requestFactory()`를 떼는 것은 타임아웃 설정만 넘기는 게 아니라 **전송 구현 선택까지**
+Boot에 넘기는 일이었다. Boot 4가 고른 것은 JDK `HttpClient`이고, 이건 HTTP/2가 기본이라
+평문 연결에서 h2c 업그레이드를 시도한다(`Connection: Upgrade`, `HTTP2-Settings`).
+ai-server의 uvicorn(h11)은 HTTP/1.1 전용이라 업그레이드를 거절하는데, 그 과정에서 본문이
+사라진다. uvicorn 로그에는 `Unsupported upgrade request`가 남는다.
+
+`spring.http.clients.imperative.factory: simple`로 HTTP/1.1 전송을 명시했다.
+`AiEngineRequestTransportTest`가 나가는 요청에 `Upgrade`/`HTTP2-Settings` 헤더가 없는지
+확인한다. 일부러 `jdk`로 되돌려 이 테스트가 실제로 실패하는 것까지 확인했다.
+
+원래 코드가 팩토리를 박아둔 것은 관례 위반이 맞았지만, 그 부작용으로 전송이 HTTP/1.1에
+고정돼 있어 이 문제가 드러나지 않고 있었다.
+
+### DTO를 record로, 대화방 ID 발급권을 서버로
+
+DTO 6종이 `@Getter/@Builder/@NoArgsConstructor/@AllArgsConstructor` 4종 세트를 달고
+있었다. `@NoArgsConstructor` 때문에 불변도 아니었다. Java 21 `record`로 바꿨다.
+생성 지점이 많은 것들은 Lombok `@Builder`를 남겨 호출부를 그대로 뒀다.
+Jackson 3와 Hibernate Validator 모두 record를 그대로 처리한다.
+
+`@CrossOrigin(origins = "*")`도 지웠다. 프론트가 같은 8080에서 서빙되는 동일 출처라
+애초에 필요 없었고, 인증 쿠키를 붙이는 순간 `allowCredentials`와 충돌하는 설정이었다.
+
+동작이 하나 바뀌었다. 존재하지 않는 `sessionId`를 보내면 예전에는 **클라이언트가 준 ID로**
+대화방을 만들어줬다. 서버가 ID 발급을 통제하지 못하는 구조다. 이제는 그 ID를 쓰지 않고
+서버가 새로 발급한다. 404로 거절하는 선택지도 있었지만, 그러면 localStorage에 오래된 ID가
+남은 사용자가 대화를 시작하지 못한다. 응답의 `sessionId`를 프론트가 갱신하므로 끊김은 없다.
 
 ## 2026-09-01
 
