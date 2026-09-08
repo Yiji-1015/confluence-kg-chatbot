@@ -1,5 +1,6 @@
 package com.yiji.Chatbot.controller;
 
+import com.yiji.Chatbot.exception.AiEngineException;
 import com.yiji.Chatbot.exception.SessionNotFoundException;
 import com.yiji.Chatbot.service.ChatService;
 import org.junit.jupiter.api.DisplayName;
@@ -10,6 +11,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
@@ -72,5 +76,26 @@ class ChatControllerErrorHandlingTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.title").value("대화방을 찾을 수 없음"))
                 .andExpect(jsonPath("$.detail").value("대화방을 찾을 수 없습니다. (sessionId: s-404)"));
+    }
+
+    @Test
+    @DisplayName("AI 엔진 실패는 502가 되고 내부 주소·예외 메시지는 응답에 실리지 않는다")
+    void aiEngineFailureBecomes502() throws Exception {
+        given(chatService.processChat(any()))
+                .willThrow(new AiEngineException(
+                        "AI 서버 호출 실패 (sessionId: s-1)",
+                        new RuntimeException("Connection refused: http://ai-server:8000/internal/chat")));
+
+        String body = """
+                {"userId": "u-1", "query": "안녕하세요"}
+                """;
+
+        mockMvc.perform(post("/api/chat").contentType(APPLICATION_JSON).content(body))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.detail")
+                        .value("AI 검색 엔진에 일시적으로 연결할 수 없습니다. 잠시 후 다시 시도해주세요."))
+                // 3번 항목의 요점. 원인 메시지에는 내부 AI 서버 주소가 들어 있다.
+                .andExpect(content().string(not(containsString("ai-server"))))
+                .andExpect(content().string(not(containsString("Connection refused"))));
     }
 }

@@ -84,8 +84,18 @@ import한다. 계층이 역전됐다.
 같이 할 것: 이미 저장된 오염 데이터 정리.
 `content LIKE '%AI 검색 엔진 서버와 일시적으로%'`로 조회 후 확인하고 삭제.
 
-- [ ] 적용
-- [ ] 기존 오염 메시지 정리
+- [x] 적용 (2026-09-08)
+  - `createFallbackResponse` 삭제. `catch (Exception)` → `catch (RestClientException)`으로
+    좁히고 `AiEngineException`을 던진다. `null` 응답 경로도 같이 예외로 바꿨다.
+  - `Exception`을 통째로 잡지 않는 이유: RestClient가 내는 실패는 전부
+    `RestClientException` 아래다. 그 밖의 예외(요청 조립 중 NPE 등)는 AI 엔진 장애가
+    아니므로 502가 아니라 500으로 나가는 게 맞다.
+  - `ChatControllerErrorHandlingTest`에 502 검증 추가. 응답에 내부 주소(`ai-server`)와
+    원인 문구(`Connection refused`)가 실리지 않는 것까지 확인한다. 총 4건 통과.
+- [x] 기존 오염 메시지 정리 — **해당 없음**
+  - `rag-postgres`의 `chatbot_db`를 조회했다. `chat_messages` 0행, `chat_sessions` 0행으로
+    테이블이 비어 있다. 지울 것이 없어 DELETE는 실행하지 않았다.
+  - 운영 DB에 데이터가 쌓인 뒤 이 코드를 배포한다면 그때 다시 조회해야 한다.
 
 ## 4. 60초짜리 외부 HTTP 호출이 트랜잭션 안에 있다
 
