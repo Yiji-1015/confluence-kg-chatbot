@@ -114,7 +114,7 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 
 | 항목 | 값 |
 | --- | --- |
-| concrete index | `confluence-openai-v2` (2026-09-13 전환, 이전 `confluence-openai-v1`) |
+| concrete index | `confluence-openai-v3` (2026-09-14 전환. v1 -> v2 -> v3) |
 | read/write alias | `confluence-current` (2026-09-02 연결 완료) |
 | primary shards | `1` |
 | replicas | `0` |
@@ -123,7 +123,7 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 | dimensions | `1536` |
 | similarity | `cosine` |
 
-실제 적용 중인 mapping (`create_confluence_index()`와 일치한다. 2026-09-13 기준):
+실제 적용 중인 mapping (`create_confluence_index()`와 일치한다. 2026-09-14 기준):
 
 ```json
 {
@@ -134,11 +134,18 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
       "tokenizer": {
         "ko_nori_tokenizer": { "type": "nori_tokenizer", "decompound_mode": "mixed" }
       },
+      "filter": {
+        "ko_pos_filter": {
+          "type": "nori_part_of_speech",
+          "stoptags": ["E","IC","J","MAG","MAJ","MM","SP","SSC","SSO",
+                       "SC","SE","XPN","XSA","XSN","XSV","UNA","NA","VSV"]
+        }
+      },
       "analyzer": {
         "nori_analyzer": {
           "type": "custom",
           "tokenizer": "ko_nori_tokenizer",
-          "filter": ["lowercase"]
+          "filter": ["ko_pos_filter", "lowercase"]
         }
       }
     }
@@ -165,6 +172,10 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 
 - `lowercase` 필터가 없으면 영문이 원형 그대로 색인돼 `BlackBird`와 `blackbird`가 다른 토큰이
   된다. 사내 문서에 영문 고유명사가 많아 실제로 검색 결과가 갈렸다(2026-09-13 확인).
+- `nori_part_of_speech` 필터가 없으면 조사·어미가 전부 검색어가 된다. 사내 문서는 격식체라
+  '줘' 같은 어미가 드물어 IDF가 높고, BM25가 이를 변별력 높은 단어로 취급한다. 실제로 어떤
+  질문의 BM25 점수 39.59가 전부 어미에서 나오고 핵심어 기여가 0이었다(2026-09-13 확인).
+  stoptags는 Elasticsearch 내장 `nori` 분석기의 기본 목록을 그대로 쓴다.
 - `number_of_replicas`를 명시하지 않으면 ES 기본값 1이 적용되고, 단일 노드에서는 그 shard가
   영구 unassigned 상태가 되어 클러스터가 계속 yellow로 남는다.
 - 필드 구성과 근거는 `RETRIEVAL.md`에 있다.
