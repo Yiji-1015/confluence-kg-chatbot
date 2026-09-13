@@ -58,6 +58,24 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                             "decompound_mode": "mixed"
                         }
                     },
+                    "filter": {
+                        # 조사·어미·접사 같은 문법 기능어를 색인에서 뺀다.
+                        # 목록은 Elasticsearch 내장 nori 분석기의 기본값 그대로다.
+                        #
+                        # 이 필터가 없으면 "~할 수 있는지 알려줘" 같은 질문의 어미가 그대로
+                        # 검색어가 된다. 사내 문서는 대부분 격식체라 '줘'가 드물어 IDF가 높고,
+                        # 그 결과 BM25가 '줘'를 변별력 높은 단어로 취급한다. 실제로 질문
+                        # "Jira 서버에서 Claude가 어떤 작업들을 할 수 있는지 알려줘"의 BM25
+                        # 점수 39.59가 전부 조사·어미에서 나왔고, 정작 jira/claude/서버의
+                        # 기여는 0이었다 (2026-09-13 _explain으로 확인).
+                        "ko_pos_filter": {
+                            "type": "nori_part_of_speech",
+                            "stoptags": [
+                                "E", "IC", "J", "MAG", "MAJ", "MM", "SP", "SSC", "SSO",
+                                "SC", "SE", "XPN", "XSA", "XSN", "XSV", "UNA", "NA", "VSV"
+                            ]
+                        }
+                    },
                     "analyzer": {
                         # lowercase: 필터가 없으면 영문이 원형 그대로 색인돼
                         # 'BlackBird'와 'blackbird'가 다른 토큰이 된다. 사내 문서에는
@@ -65,7 +83,7 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                         "nori_analyzer": {
                             "type": "custom",
                             "tokenizer": "ko_nori_tokenizer",
-                            "filter": ["lowercase"]
+                            "filter": ["ko_pos_filter", "lowercase"]
                         }
                     }
                 }
