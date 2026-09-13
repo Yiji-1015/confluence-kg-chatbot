@@ -188,24 +188,38 @@ def index_document_chunks(
 
 
 
-def _normalize_scores(hits: List[Dict[str, Any]]) -> Dict[str, float]:
+def _rrf_scores(hits: List[Dict[str, Any]], k: Optional[int] = None) -> Dict[str, float]:
     """
-    ES hit 리스트의 _score를 chunk_id 기준 0~1 min-max 정규화해서 반환하는 헬퍼 함수.
-    BM25 원시 점수(수십 단위)와 kNN 코사인 유사도(0~1)는 스케일이 전혀 달라서,
-    정규화 없이 그대로 더하면 BM25가 항상 압도해버린다 (2026-08-21 실측으로 확인됨).
+    ES hit 리스트를 chunk_id -> RRF 점수(1/(k+순위))로 바꿔서 반환한다.
+
+    점수가 아니라 순위만 쓴다. BM25 원시 점수(수십 단위)와 kNN 코사인(0~1)은 스케일이
+    전혀 달라, 점수를 그대로 더하면 BM25가 압도한다. 예전에는 각 리스트를 0~1로
+    min-max 정규화해 해결했으나 두 가지 문제가 있었다.
+
+    1. 정규화는 "그 리스트의 전체 폭 대비 비율"로 바꾸므로, 폭이 좁은 리스트의 미세한
+       차이가 크게 반영된다. 실측(2026-09-14): kNN 후보 50건의 점수 폭이 0.09에 불과해
+       1위와 2위의 실제 차이 0.038이 정규화 후 0.41로 부풀려졌다.
+    2. min/max가 바뀌면 같은 문서의 점수가 바뀐다. 색인이 커지면 BM25의 IDF가, 임베딩
+       모델을 바꾸면 코사인 분포가 이동한다.
+
+    순위는 다른 문서의 점수와 무관하므로 두 문제가 모두 사라진다. RRF는 Elasticsearch,
+    OpenSearch, Weaviate, Qdrant, Azure AI Search가 공통으로 쓰는 표준 방식이다.
+    (ES의 retriever.rrf는 basic 라이선스에서 막혀 있으나, 두 리스트를 이미 따로 받아
+     직접 합치고 있으므로 여기서 계산하면 된다.)
     """
-    if not hits:
-        return {}
+    k = settings.RRF_K if k is None else k
+    scores: Dict[str, float] = {}
+    for rank, hit in enumerate(hits, start=1):
+        chunk_id = hit["_source"].get("chunk_id")
+        if chunk_id:
+            scores[chunk_id] = 1.0 / (k + rank)
+    return scores
 
-    scores = [h["_score"] for h in hits]
-    lo, hi = min(scores), max(scores)
-    span = hi - lo
 
-    normalized = {}
-    for h in hits:
-        chunk_id = h["_source"].get("chunk_id")
-        normalized[chunk_id] = 1.0 if span == 0 else (h["_score"] - lo) / span
-    return normalized
+def rrf_max_score(k: Optional[int] = None) -> float:
+    """두 리스트 모두에서 1위일 때 나오는 이론상 최대 결합 점수. 가산점 크기의 기준."""
+    k = settings.RRF_K if k is None else k
+    return 2.0 / (k + 1)
 
 
 # 재랭킹에 실제로 쓰는 필드만 받는다. _source를 지정하지 않으면 1536차원 text_vector까지
@@ -274,18 +288,23 @@ def _fetch_full_doc_texts(
 _RECENCY_BUCKETS = 5
 
 
-def _apply_recency_bonus(scored: List[Dict[str, Any]], max_bonus: float,
+def _apply_recency_bonus(scored: List[Dict[str, Any]], max_bonus_ratio: float,
                          buckets: int = _RECENCY_BUCKETS) -> None:
     """
-    후보들을 updated_at 기준 최신순으로 5등분해, 최신 그룹부터 max_bonus~0을 균등 배분해
-    score에 더한다 (제자리 수정). max_bonus=0.04면 0.04 / 0.03 / 0.02 / 0.01 / 0.
+    후보들을 updated_at 기준 최신순으로 5등분해, 최신 그룹부터 차등 가산한다 (제자리 수정).
+
+    max_bonus_ratio는 절대값이 아니라 **이론상 최대 결합 점수에 대한 비율**이다.
+    결합 방식을 바꾸면 점수 범위가 통째로 달라지기 때문이다. min-max 정규화는 0~1이었고
+    RRF(K=60)는 0~0.0328이라, 절대값을 그대로 물려주면 가산점이 점수를 압도한다.
+    실측(2026-09-14): 최대치의 4%는 무해하거나 소폭 이득, 25%에서는 MRR이 0.908 -> 0.668.
 
     절대 시각이 아니라 후보 풀 내 상대 순위로 나눈다. 그래서 후보가 전부 같은 주에
     작성됐어도 가산점 폭은 그대로 벌어진다 — 이 부작용을 감수할 값인지는 측정으로 판단한다.
     updated_at은 Confluence 최종 수정 시각이라 "문서 내용의 날짜"와 다르다는 점도 유의.
     """
-    if max_bonus <= 0 or not scored:
+    if max_bonus_ratio <= 0 or not scored:
         return
+    max_bonus = max_bonus_ratio * rrf_max_score()
 
     dated = [e for e in scored if e.get("updated_at")]
     if len(dated) < buckets:
@@ -313,10 +332,9 @@ def search_hybrid(
     1. BM25 키워드 검색: Nori 분석기로 title과 text 필드 매칭
        - title^2.0: 사내 업무 문서 특성상 제목 매칭이 매우 중요하므로 문서 제목에 2.0배 가중치 부여
     2. Vector kNN 의미 검색: 1536차원 질문 임베딩 벡터(query_vector)와 text_vector의 코사인 유사도 매칭
-    3. 점수 결합: BM25와 kNN을 같은 요청에 넣고 raw score를 그냥 더하면 BM25(수십 단위)가
-       kNN(0~1)을 압도해서 사실상 BM25 단독 검색이 되어버린다. 그래서 두 쿼리를 따로 실행해
-       chunk_id 기준으로 각각 0~1 min-max 정규화한 뒤 가중합으로 재랭킹한다.
-       가중치는 settings.HYBRID_BM25_WEIGHT : HYBRID_KNN_WEIGHT (기본 4:6).
+    3. 점수 결합(RRF): 두 쿼리를 따로 실행해 각 리스트에서의 순위로 1/(K+순위)를 구하고
+       chunk_id 기준으로 더한다. 점수가 아니라 순위만 쓰므로 스케일 차이를 보정할 필요가 없고,
+       양쪽 리스트에 모두 든 청크가 두 번 더해져 자연히 상위로 온다.
     """
     target_index = index_name or settings.ELASTICSEARCH_INDEX
     top_k = top_k or settings.RETRIEVAL_TOP_K
@@ -377,12 +395,13 @@ def search_hybrid(
         print(f"[Elasticsearch Error] 하이브리드 검색 수행 중 오류 발생: {e}")
         return []
 
-    # 2. 각 리스트를 chunk_id 기준 0~1로 정규화
-    bm25_norm = _normalize_scores(bm25_hits)
-    knn_norm = _normalize_scores(knn_hits)
+    # 2. 각 리스트를 chunk_id -> 1/(K+순위) 로 바꾼다
+    bm25_rrf = _rrf_scores(bm25_hits)
+    knn_rrf = _rrf_scores(knn_hits)
 
-    # 3. chunk_id 기준으로 두 결과를 합치고 설정된 가중치로 재랭킹.
-    #    한쪽 후보 풀에만 있는 청크는 없는 쪽 점수를 0.0으로 받는다(= 그쪽에서 탈락).
+    # 3. chunk_id 기준으로 두 결과를 합치고 RRF 점수를 더해 재랭킹.
+    #    한쪽 후보 풀에만 있는 청크는 그쪽 기여가 0이다. 양쪽에 든 청크는 두 번 더해지므로
+    #    "두 검색이 모두 인정한 문서"가 자연히 위로 온다.
     merged_sources: Dict[str, Dict[str, Any]] = {}
     for hit in bm25_hits + knn_hits:
         chunk_id = hit["_source"].get("chunk_id")
@@ -391,10 +410,7 @@ def search_hybrid(
 
     scored: List[Dict[str, Any]] = []
     for chunk_id, source in merged_sources.items():
-        combined_score = (
-            settings.HYBRID_BM25_WEIGHT * bm25_norm.get(chunk_id, 0.0)
-            + settings.HYBRID_KNN_WEIGHT * knn_norm.get(chunk_id, 0.0)
-        ) / (settings.HYBRID_BM25_WEIGHT + settings.HYBRID_KNN_WEIGHT)
+        combined_score = bm25_rrf.get(chunk_id, 0.0) + knn_rrf.get(chunk_id, 0.0)
         scored.append({
             "chunk_id": source.get("chunk_id"),
             "doc_id": source.get("doc_id"),
@@ -449,11 +465,12 @@ def _self_check() -> None:
     assert grouped["B"] == "짧은문서", grouped["B"]
     assert _group_chunk_texts([], 100) == {}
 
-    # 최신 가산점: 5분위로 0.04/0.03/0.02/0.01/0 (동점 근처만 흔들도록 작게)
+    # 최신 가산점: 5분위 차등. 값은 이론상 최대 결합 점수(2/(K+1))에 대한 비율이다.
+    unit = rrf_max_score() / 4
     pool = [{"score": 0.5, "updated_at": f"2026-0{i}-01T00:00:00.000Z"} for i in range(1, 6)]
-    _apply_recency_bonus(pool, 0.04)
-    got = [round(e["score"] - 0.5, 3) for e in pool]
-    assert got == [0.0, 0.01, 0.02, 0.03, 0.04], got          # 오래된 것 -> 최신 순
+    _apply_recency_bonus(pool, 1.0)                           # 비율 1.0 = 최대치만큼
+    got = [round((e["score"] - 0.5) / unit, 3) for e in pool]
+    assert got == [0.0, 1.0, 2.0, 3.0, 4.0], got              # 오래된 것 -> 최신 순
     off = [{"score": 0.5, "updated_at": "2026-01-01"} for _ in range(5)]
     _apply_recency_bonus(off, 0.0)
     assert all(e["score"] == 0.5 for e in off)                # 0이면 아무것도 안 함
@@ -461,14 +478,21 @@ def _self_check() -> None:
     _apply_recency_bonus(few, 0.04)
     assert all(e["score"] == 0.5 for e in few)                # 후보가 그룹 수보다 적으면 건너뜀
 
-    norm = _normalize_scores([
+    # RRF: 점수가 아니라 순위로만 계산한다. 점수 차가 얼마든 1위는 언제나 1/(K+1)이다.
+    rrf = _rrf_scores([
         {"_score": 21.0, "_source": {"chunk_id": "a"}},
         {"_score": 18.2, "_source": {"chunk_id": "b"}},
         {"_score": 4.1, "_source": {"chunk_id": "c"}},
-    ])
-    assert norm["a"] == 1.0 and norm["c"] == 0.0 and abs(norm["b"] - 0.8343) < 1e-3
-    # 원소가 하나뿐이면 min==max라 0으로 나누지 않고 1.0을 준다
-    assert _normalize_scores([{"_score": 5.0, "_source": {"chunk_id": "x"}}])["x"] == 1.0
+    ], k=60)
+    assert rrf["a"] == 1 / 61 and rrf["b"] == 1 / 62 and rrf["c"] == 1 / 63, rrf
+    # 점수가 완전히 달라도 순위가 같으면 결과가 같다
+    same = _rrf_scores([
+        {"_score": 0.7, "_source": {"chunk_id": "a"}},
+        {"_score": 0.69, "_source": {"chunk_id": "b"}},
+        {"_score": 0.68, "_source": {"chunk_id": "c"}},
+    ], k=60)
+    assert same == rrf, same
+    assert _rrf_scores([]) == {}
     print("es_client self-check OK")
 
 

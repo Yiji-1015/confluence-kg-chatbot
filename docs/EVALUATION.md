@@ -88,14 +88,14 @@ RAGAS는 문서 단위 리스트를 요구하고, 자체 판정 프롬프트는 
 ## 1.3 `_run_name()` — 실행 이름에 설정값을 담는다
 
 ```python
-f"qa-bm25_{HYBRID_BM25_WEIGHT:g}-knn_{HYBRID_KNN_WEIGHT:g}"
+f"qa-rrf_k{RRF_K}"
 f"-top{RETRIEVAL_TOP_K}-cand{RETRIEVAL_CANDIDATE_SIZE}"
 f"-chars{DOC_CONTEXT_MAX_CHARS}-recency{RECENCY_BOOST_MAX:g}"
 f"-temp{LLM_TEMPERATURE:g}-judge_{JUDGE_MODEL}"
 f"-{datetime.now():%m%d-%H%M}"
 ```
 
-예: `qa-bm25_4-knn_6-top5-cand50-chars3000-recency0.04-temp0-judge_solar-0914-1530`
+예: `qa-rrf_k60-top5-cand50-chars3000-recency0.04-temp0-judge_solar-0914-1530`
 
 검색 결과나 점수를 바꾸는 설정값이 전부 들어간다. 끝의 시각은 같은 설정을 여러 번 돌릴 때
 이름이 겹치지 않게 하기 위한 것이다.
@@ -431,7 +431,7 @@ else:
 
 | 방식 | v2 원본 hit@5 / MRR | v4 paraphrase hit@5 / MRR |
 |---|---|---|
-| 하이브리드 (4:6) | 0.974 / **0.908** | **0.658** / **0.512** |
+| 하이브리드 (RRF) | 0.974 / **0.908** | **0.763** / **0.560** |
 | BM25 단독 | 0.947 / 0.864 | 0.605 / 0.390 |
 | kNN 단독 | 0.921 / 0.812 | 0.605 / 0.501 |
 

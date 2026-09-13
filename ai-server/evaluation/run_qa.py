@@ -54,8 +54,7 @@ def _run_name() -> str:
     끝의 시각은 같은 설정을 여러 번 돌릴 때(재현성 확인) 이름이 겹치지 않게 하기 위함이다.
     """
     return (
-        f"qa-bm25_{settings.HYBRID_BM25_WEIGHT:g}"
-        f"-knn_{settings.HYBRID_KNN_WEIGHT:g}"
+        f"qa-rrf_k{settings.RRF_K}"
         f"-top{settings.RETRIEVAL_TOP_K}"
         f"-cand{settings.RETRIEVAL_CANDIDATE_SIZE}"
         f"-chars{settings.DOC_CONTEXT_MAX_CHARS}"
