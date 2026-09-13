@@ -4,6 +4,46 @@
 
 ## 2026-09-14
 
+### `ragas_faithfulness` 채점 실패의 원인 — RAGAS의 `max_tokens` 기본값 1024
+
+실행마다 1건씩 나던 `IncompleteOutputException`이 09-13 실행에서 5건으로 늘어 원인을 찾았다.
+
+RAGAS의 `llm_factory`는 `max_tokens`를 넘기지 않으면 **1024**를 쓴다(`InstructorModelArgs`).
+`run_qa.py`는 넘기지 않고 있었다.
+
+```python
+judge = llm_factory(model=settings.JUDGE_MODEL, provider="openai", client=client)
+#                                                                  ^ max_tokens 없음 -> 1024
+```
+
+faithfulness는 답변을 **문장 단위로 쪼개 문장마다 판정 JSON을 만든다.** 답변이 길면 문장이
+많아지고 출력이 1024토큰을 넘겨 잘린다. instructor가 `finish_reason: length`를 보고
+예외를 던지며, 그 문항은 점수 없이 빠져 평균이 40문항 평균이 된다.
+
+**실측 확인 (2026-09-14)**
+
+| 입력 | `max_tokens=1024` | `max_tokens=4096` |
+|---|---|---|
+| 문장 40개 / 2,510자 답변 | **IncompleteOutputException** | 성공 |
+
+같은 입력에서 한도만 바꿨으므로 다른 변수는 없다.
+
+`context_precision`은 문서 5건만 판정해 출력이 짧아 걸리지 않는다.
+**같은 판정 모델을 쓰는데 faithfulness만 실패하던 이유가 이것이다.**
+
+RAGAS 자체 docstring에도 안내가 있다.
+> "Default max_tokens=1024 may not be sufficient /
+>  If structured output is truncated, increase max_tokens further"
+
+`RAGAS_JUDGE_MAX_TOKENS = 4096`을 상수로 두고 넘기도록 고쳤다.
+
+**실패가 1건에서 5건으로 늘어난 이유.** RRF 전환으로 `ragas_context_precision`이
+0.753 -> 0.849로 올랐다. 컨텍스트가 더 관련성 높아지면서 답변이 길어졌고, 문장 수가 늘어
+한도에 걸리는 문항이 늘어난 것으로 보인다. **검색 품질이 개선되면서 지표 수집이 깨진 셈이다.**
+
+이 전까지의 `ragas_faithfulness` 값은 모두 일부 문항이 빠진 평균이므로,
+고친 뒤 다시 측정해야 비교할 수 있다.
+
 ### 결합 방식을 RRF(Reciprocal Rank Fusion)로 바꿨다
 
 각 리스트를 0~1로 min-max 정규화한 뒤 4:6으로 가중평균하던 것을, 각 리스트에서의 **순위**로
@@ -977,6 +1017,9 @@ faithfulness 상승은 해석하지 않는다. 45문항 1회 측정에서 이 �
 `ragas_faithfulness`의 `IncompleteOutputException`이 실행마다 1건씩 나온다. 429가 아니라
 판정 모델이 구조화 출력을 완성하지 못하고 잘리는 경우다. 특정 문항의 답변이 길어서로
 추정되며, 1건이라 평균 영향은 작지만 원인은 확인되지 않았다.
+
+> (2026-09-14 해결) 원인은 RAGAS `llm_factory`의 `max_tokens` 기본값 1024였다.
+> 답변이 길면 문장별 판정 JSON이 한도를 넘겨 잘린다. 맨 위 2026-09-14 항목 참고.
 
 ## Elasticsearch 별칭 연결 (2026-09-02)
 

@@ -458,9 +458,28 @@ RAGAS는 답변을 문장 단위로 쪼개 각 문장이 컨텍스트에 근거�
 
 ## 5.4 알려진 채점 실패
 
-`ragas_faithfulness`에서 `IncompleteOutputException`이 실행마다 1건씩 나온다.
-429가 아니라 판정 모델이 구조화 출력을 완성하지 못하고 잘리는 경우다.
-특정 문항의 답변이 길어서로 추정되며 원인은 확인되지 않았다.
+`ragas_faithfulness`에서 `IncompleteOutputException`이 나던 문제는 **2026-09-14에 원인을
+찾아 고쳤다.**
+
+RAGAS의 `llm_factory`는 `max_tokens`를 넘기지 않으면 기본값 **1024**를 쓴다
+(`InstructorModelArgs`). faithfulness는 답변을 **문장 단위로 쪼개 문장마다 판정 JSON을
+만들기 때문에**, 답변이 길면 출력이 1024토큰을 넘겨 잘리고 instructor가 예외를 던진다.
+그 문항은 점수 없이 빠져 평균이 40문항 평균이 된다.
+
+실측: 문장 40개(2,510자) 답변에서 `max_tokens=1024`는 실패하고 `4096`은 성공했다.
+같은 입력에서 한도만 바꾼 것이므로 다른 변수는 없다.
+
+`context_precision`은 문서 5건만 판정해 출력이 짧아 걸리지 않는다.
+**같은 판정 모델인데 faithfulness만 실패하던 이유가 이것이다.**
+
+RAGAS 자체 docstring도 "Default max_tokens=1024 may not be sufficient /
+If structured output is truncated, increase max_tokens further"라고 안내한다.
+
+`RAGAS_JUDGE_MAX_TOKENS = 4096`으로 고정했다.
+
+> 실패 건수가 2026-09-08의 1건에서 09-13 실행의 5건으로 늘었는데, RRF 전환으로
+> `context_precision`이 0.753 → 0.849로 오르며 컨텍스트가 충실해지고 답변이 길어진 것이
+> 원인으로 보인다. **검색이 좋아지면서 지표 수집이 깨진 셈이다.**
 
 ---
 

@@ -46,6 +46,9 @@ from app.llm.prompts import build_context_text
 DATASET_NAME = "confluence-rag-qa-v2"
 JUDGE_MODEL = settings.JUDGE_MODEL
 
+# RAGAS 판정 호출의 출력 한도. 기본값 1024는 긴 답변에서 구조화 출력이 잘린다 (아래 주석 참고).
+RAGAS_JUDGE_MAX_TOKENS = 4096
+
 
 def _run_name() -> str:
     """
@@ -203,7 +206,15 @@ def _ragas_metrics():
         from ragas.metrics.collections import ContextPrecisionWithoutReference, Faithfulness
 
         client = AsyncOpenAI(base_url=f"{settings.LITELLM_BASE_URL}/v1", api_key="litellm-local")
-        judge = llm_factory(model=settings.JUDGE_MODEL, provider="openai", client=client)
+        # max_tokens를 반드시 넘긴다. RAGAS의 기본값은 1024인데(InstructorModelArgs),
+        # faithfulness는 답변을 문장 단위로 쪼개 문장마다 판정 JSON을 만들기 때문에
+        # 답변이 길면 출력이 1024를 넘겨 잘리고 IncompleteOutputException으로 죽는다.
+        # 그 문항은 점수 없이 빠져 평균이 40문항 평균이 된다.
+        # 실측(2026-09-14): 문장 40개(2,510자) 답변에서 1024는 실패, 4096은 성공.
+        # context_precision은 문서 5건만 판정해 출력이 짧아 걸리지 않는다. 그래서
+        # 같은 판정 모델인데 faithfulness만 실패했다.
+        judge = llm_factory(model=settings.JUDGE_MODEL, provider="openai", client=client,
+                            max_tokens=RAGAS_JUDGE_MAX_TOKENS)
         _RAGAS["faithfulness"] = Faithfulness(llm=judge)
         _RAGAS["context_precision"] = ContextPrecisionWithoutReference(llm=judge)
         print(f"[RAGAS] 지표 활성화 (판정 모델: {settings.JUDGE_MODEL})")
