@@ -54,7 +54,7 @@ def _bm25_hits(es, index, query):
     return es.search(index=index, body={
         "query": {"bool": {"must": [{"multi_match": {
             "query": query,
-            "fields": ["title^2.0", "title_search^2.0", "text"],
+            "fields": ["title^2.0", "text"],
             "type": "best_fields",
         }}]}},
         "size": CANDIDATE_SIZE,

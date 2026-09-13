@@ -2,7 +2,6 @@ import asyncio
 from elasticsearch import Elasticsearch, helpers
 from typing import List, Dict, Any, Optional
 from app.config import settings
-from app.parser.confluence_parser import expand_title_dates
 
 
 def get_es_client() -> Elasticsearch:
@@ -37,24 +36,36 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
     es = get_es_client()
 
     try:
-        # 인덱스가 이미 존재하면 재생성하지 않되, 나중에 추가된 필드는 매핑에 더해준다.
-        # 그냥 두면 dynamic mapping이 nori가 아닌 기본 분석기로 잡아버려 한국어가 안 걸린다.
+        # 이미 있으면 건드리지 않는다. 매핑(특히 분석기)을 바꿔야 하면 새 인덱스를 만들고
+        # _reindex한 뒤 별칭을 옮긴다. 분석기 변경은 기존 문서에 소급되지 않기 때문이다.
         if es.indices.exists(index=target_index):
-            es.indices.put_mapping(index=target_index, body={
-                "properties": {
-                    "title_search": {"type": "text", "analyzer": "nori_analyzer"},
-                }
-            })
             return True
 
         # Nori 형태소 분석기 및 1536차원 벡터 필드 매핑 정의 (ELASTICSEARCH.md 준수)
         mapping = {
             "settings": {
+                # 단일 노드 배포라 복제본을 두면 그 shard가 영구 unassigned 상태가 되고
+                # 클러스터가 계속 yellow로 남아 진짜 이상 신호를 덮는다.
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
                 "analysis": {
+                    "tokenizer": {
+                        # decompound_mode=mixed: 복합명사를 쪼개면서 원형도 함께 남긴다.
+                        # 기본값(discard)이면 '정보처리기사'가 ['정보','처리','기사']로만 남아
+                        # 원형으로 물었을 때 걸리지 않는다.
+                        "ko_nori_tokenizer": {
+                            "type": "nori_tokenizer",
+                            "decompound_mode": "mixed"
+                        }
+                    },
                     "analyzer": {
+                        # lowercase: 필터가 없으면 영문이 원형 그대로 색인돼
+                        # 'BlackBird'와 'blackbird'가 다른 토큰이 된다. 사내 문서에는
+                        # lk-ocr-api, HashiCorp 같은 영문 고유명사가 많다.
                         "nori_analyzer": {
                             "type": "custom",
-                            "tokenizer": "nori_tokenizer"
+                            "tokenizer": "ko_nori_tokenizer",
+                            "filter": ["lowercase"]
                         }
                     }
                 }
@@ -64,8 +75,6 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                     "chunk_id": {"type": "keyword"},  # Elasticsearch _id로 사용되는 고유 청크 키
                     "doc_id": {"type": "keyword"},    # 원본 Confluence 문서 ID (삭제 동기화용)
                     "title": {"type": "text", "analyzer": "nori_analyzer"},  # 문서 제목 (BM25 키워드 검색)
-                    # 제목의 날짜를 여러 표기로 펼쳐 담는 검색 전용 필드. 표시용 title은 원본을 유지한다.
-                    "title_search": {"type": "text", "analyzer": "nori_analyzer"},
                     "text": {"type": "text", "analyzer": "nori_analyzer"},   # 청크 본문 (BM25 키워드 검색)
                     "space_key": {"type": "keyword"}, # Confluence Space 식별자
                     "author": {"type": "keyword"},   # 작성자 메타데이터
@@ -124,7 +133,6 @@ def index_document_chunks(
             "chunk_id": chunk["chunk_id"],
             "doc_id": chunk["doc_id"],
             "title": chunk["title"],
-            "title_search": expand_title_dates(chunk["title"]),
             "text": chunk["text"],
             "space_key": chunk.get("metadata", {}).get("space_key", settings.CONFLUENCE_SPACE_KEY),
             "author": chunk.get("metadata", {}).get("author", "Unknown"),
@@ -308,9 +316,7 @@ def search_hybrid(
                 {
                     "multi_match": {
                         "query": query_text,
-                        # title_search는 날짜 표기 변형만 담고 있어 title과 토큰이 겹치지 않는다.
-                        # 따라서 제목 가중치가 이중 계상되지 않는다.
-                        "fields": ["title^2.0", "title_search^2.0", "text"],
+                        "fields": ["title^2.0", "text"],
                         "type": "best_fields"
                     }
                 }

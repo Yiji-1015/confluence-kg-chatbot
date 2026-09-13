@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # 문제가 생기면 별칭을 되돌리는 것만으로 즉시 롤백된다.
     ELASTICSEARCH_INDEX: str = "confluence-current"
     # 별칭이 가리킬 실제 인덱스. 최초 생성 때만 쓰인다.
-    ELASTICSEARCH_CONCRETE_INDEX: str = "confluence-openai-v1"
+    ELASTICSEARCH_CONCRETE_INDEX: str = "confluence-openai-v2"
     ELASTICSEARCH_USER: str = "elastic"
     ELASTICSEARCH_PASSWORD: Optional[str] = None
     ELASTICSEARCH_CA_CERT: str = str(REPO_ROOT / "elasticsearch" / "certs" / "ca" / "ca.crt")
