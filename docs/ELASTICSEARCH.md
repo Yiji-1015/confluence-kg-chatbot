@@ -114,16 +114,16 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 
 | 항목 | 값 |
 | --- | --- |
-| concrete index | `confluence-openai-v1` |
+| concrete index | `confluence-openai-v2` (2026-09-13 전환, 이전 `confluence-openai-v1`) |
 | read/write alias | `confluence-current` (2026-09-02 연결 완료) |
 | primary shards | `1` |
 | replicas | `0` |
-| vector field | `embedding` |
+| vector field | `text_vector` |
 | vector type | `dense_vector` |
 | dimensions | `1536` |
 | similarity | `cosine` |
 
-권장 핵심 mapping:
+실제 적용 중인 mapping (`create_confluence_index()`와 일치한다. 2026-09-13 기준):
 
 ```json
 {
@@ -132,13 +132,10 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
     "number_of_replicas": 0,
     "analysis": {
       "tokenizer": {
-        "ko_nori_tokenizer": {
-          "type": "nori_tokenizer",
-          "decompound_mode": "mixed"
-        }
+        "ko_nori_tokenizer": { "type": "nori_tokenizer", "decompound_mode": "mixed" }
       },
       "analyzer": {
-        "ko_nori": {
+        "nori_analyzer": {
           "type": "custom",
           "tokenizer": "ko_nori_tokenizer",
           "filter": ["lowercase"]
@@ -148,30 +145,29 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
   },
   "mappings": {
     "properties": {
-      "chunk_id": { "type": "keyword" },
-      "page_id": { "type": "keyword" },
-      "space_key": { "type": "keyword" },
-      "title": {
-        "type": "text",
-        "analyzer": "ko_nori",
-        "fields": { "keyword": { "type": "keyword" } }
-      },
-      "content": { "type": "text", "analyzer": "ko_nori" },
-      "chunk_index": { "type": "integer" },
-      "ancestor_ids": { "type": "keyword" },
-      "url": { "type": "keyword", "index": false },
-      "updated_at": { "type": "date" },
-      "metadata": { "type": "flattened" },
-      "embedding": {
-        "type": "dense_vector",
-        "dims": 1536,
-        "index": true,
-        "similarity": "cosine"
-      }
+      "chunk_id":     { "type": "keyword" },
+      "doc_id":       { "type": "keyword" },
+      "title":        { "type": "text", "analyzer": "nori_analyzer" },
+      "text":         { "type": "text", "analyzer": "nori_analyzer" },
+      "space_key":    { "type": "keyword" },
+      "author":       { "type": "keyword" },
+      "url":          { "type": "keyword" },
+      "category":     { "type": "keyword" },
+      "path":         { "type": "keyword" },
+      "updated_at":   { "type": "date" },
+      "chunk_index":  { "type": "integer" },
+      "total_chunks": { "type": "integer" },
+      "text_vector":  { "type": "dense_vector", "dims": 1536, "index": true, "similarity": "cosine" }
     }
   }
 }
 ```
+
+- `lowercase` 필터가 없으면 영문이 원형 그대로 색인돼 `BlackBird`와 `blackbird`가 다른 토큰이
+  된다. 사내 문서에 영문 고유명사가 많아 실제로 검색 결과가 갈렸다(2026-09-13 확인).
+- `number_of_replicas`를 명시하지 않으면 ES 기본값 1이 적용되고, 단일 노드에서는 그 shard가
+  영구 unassigned 상태가 되어 클러스터가 계속 yellow로 남는다.
+- 필드 구성과 근거는 `RETRIEVAL.md`에 있다.
 
 - 서로 다른 embedding model의 벡터를 같은 concrete index에 섞지 않는다.
 - 모델이나 차원이 바뀌면 새 버전 index를 만들고 전체 재색인한 뒤 alias를 전환한다.
