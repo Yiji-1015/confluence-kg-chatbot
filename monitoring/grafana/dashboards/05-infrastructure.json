@@ -290,59 +290,6 @@
       }
     },
     {
-      "id": 6,
-      "type": "timeseries",
-      "title": "컨테이너 파일시스템 사용",
-      "description": "Elasticsearch 색인과 Postgres 데이터가 쌓이는 곳. 디스크가 차면 ES가 read-only로 전환되어 색인이 멈춘다.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 18
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum by (name) (container_fs_usage_bytes{name=~\"rag-.+\"})",
-          "legendFormat": "{{name}}",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          }
-        }
-      ],
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 8,
-            "showPoints": "never",
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      }
-    },
-    {
       "id": 7,
       "type": "timeseries",
       "title": "가동 시간 / 재시작",
@@ -351,7 +298,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 18
       },
       "datasource": {
         "type": "prometheus",

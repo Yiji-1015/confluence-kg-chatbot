@@ -116,6 +116,8 @@ Prometheus의 `up{job="backend"}`으로 상태를 본다.
    - `localhost:8080/actuator/prometheus` → `http_server_requests_*`, `http_client_requests_*`,
      `hikaricp_*`, `jvm_*`, `chat_history_cache_total` 확인
    - `localhost:9090/targets` → prometheus / ai-server / backend / cadvisor **4개 전부 UP**
+     (⚠️ 2026-09-14 추가: **타겟 UP은 데이터가 들어온다는 뜻이 아니다.** cadvisor는 UP인데
+      컨테이너 메트릭이 하나도 없었다. 아래 "cAdvisor가 컨테이너를 인식하지 못하던 문제" 참고)
    - Langfuse 키는 ai-server 컨테이너에 주입돼 있다(`jp.cloud.langfuse.com`).
      트레이스가 대시보드에 실제로 쌓였는지는 Langfuse 콘솔에서 확인해야 한다.
 6. **문서 마무리** — 실행 방법, 대시보드별 의미, 관측 못 하는 영역
@@ -240,6 +242,63 @@ actuator만 제외한 **모든 URI**를 담고 있었다. 가벼운 `GET /api/se
 
 `monitoring/grafana/dashboards/`에 JSON으로 두고 provisioning으로 자동 등록된다.
 UI에서 만든 대시보드는 컨테이너와 함께 사라지므로 저장소에서 관리한다.
+
+## cAdvisor가 컨테이너를 인식하지 못하던 문제 (2026-09-14 해결)
+
+**증상.** Prometheus 타겟 4개가 전부 UP인데 `05. Infrastructure` 대시보드 7패널이 통째로
+비어 있었다. `01. Overview`의 컨테이너 CPU·메모리·재시작 3패널,
+`03. Data & Middleware`의 자원 패널 1개도 같이 비었다.
+전체 56개 쿼리 중 **16개가 빈 결과**였다.
+
+**원인.** 이 호스트의 Docker는 containerd 이미지 저장소를 쓴다.
+
+```
+docker info
+  Storage Driver: overlayfs
+    driver-type: io.containerd.snapshotter.v1
+```
+
+이 방식에서는 `/var/lib/docker/image/` 디렉터리 자체가 없다. 레이어를 containerd가
+관리하기 때문이다. 그런데 cAdvisor의 Docker 팩토리는 컨테이너마다
+`/var/lib/docker/image/<driver>/layerdb/mounts/<id>/mount-id`에서 RW 레이어를 찾는다.
+
+```
+manager.go:1116] Failed to create existing container: /system.slice/docker-<id>.scope:
+  failed to identify the read-write layer ID for container "<id>".
+  - open /rootfs/var/lib/docker/image/overlayfs/layerdb/mounts/<id>/mount-id:
+    no such file or directory
+```
+
+이 실패로 **모든 컨테이너 등록이 무산되어 `name` 라벨이 붙지 않는다.**
+대시보드는 전부 `name=~"rag-.+"`로 거르므로 하나도 잡히지 않았다.
+
+**듣지 않았던 해법.** `--disable_metrics=disk`로 레이어 조회를 건너뛰려 했으나 효과가 없다.
+실패 지점이 디스크 수집이 아니라 **컨테이너 등록(`manager.go:1116`)**이기 때문이다.
+
+**해법.** cAdvisor를 `v0.52.1` → `v0.55.1`로 올리면 해결된다.
+
+| | 수정 전 | 수정 후 |
+|---|---|---|
+| `name="rag-*"` 시계열 | 0건 | **11건** |
+| 등록 실패 로그 | 매 컨테이너마다 | **0건** |
+| 대시보드 쿼리 (데이터 있음 / 전체) | 40 / 56 | **53 / 56** |
+
+남은 3개 중 2개는 에러 카운터(`rag_requests_total{status="error"}`,
+`rag_stage_errors_total`)라 에러가 없으면 비는 것이 정상이다.
+나머지 하나였던 `container_fs_usage_bytes`는 containerd 저장소에서 값이 나오지 않아
+(v0.55.1에서 레이어 조회가 성공해도 마찬가지) 해당 패널을 제거했다.
+
+**교훈.** 타겟 UP은 "수집기가 살아 있다"는 뜻이지 "데이터가 들어온다"는 뜻이 아니다.
+이 프로젝트에서 같은 형태의 문제가 세 번 있었다.
+
+| | 증상 | 실제 원인 |
+|---|---|---|
+| 2026-09-08 | p95 패널이 빔 | Micrometer 히스토그램 미설정 |
+| 2026-09-13 | 평가 점수가 그럴듯한데 문항이 빠짐 | 판정 모델 호출 실패를 세지 않음 |
+| 2026-09-14 | 대시보드가 빔, 타겟은 UP | cAdvisor가 컨테이너를 등록하지 못함 |
+
+**세 번 모두 "정상으로 보이는 상태"가 문제였다.** 값이 없다는 것을 값으로 알려주는 장치가
+없으면, 고장은 조용한 정상으로 위장한다.
 
 | 대시보드 | 답하는 질문 |
 |---|---|

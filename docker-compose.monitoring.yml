@@ -68,17 +68,29 @@ services:
     restart: on-failure:3
 
   cadvisor:
-    # v0.49.1은 Docker API 클라이언트가 1.41이라 최신 데몬(최소 1.44)에 거절당한다.
-    #   "Registration of the docker container factory failed: client version 1.41 is too old"
-    # 그러면 컨테이너를 인식하지 못해 name 라벨이 붙지 않고, 05번 대시보드가 통째로 빈다.
-    # 컨테이너 자체는 살아 있어 타겟은 UP으로 보이므로 눈치채기 어렵다.
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    # 버전이 두 번 문제가 됐다. 둘 다 증상이 "타겟은 UP인데 05번 대시보드가 통째로 빔"이라
+    # 눈치채기 어려웠다.
+    #
+    # 1) v0.49.1: Docker API 클라이언트가 1.41이라 최신 데몬(최소 1.44)에 거절당한다.
+    #      "Registration of the docker container factory failed: client version 1.41 is too old"
+    #
+    # 2) v0.52.1: 이 호스트의 Docker가 containerd 이미지 저장소를 쓴다는 것이 문제였다.
+    #      docker info -> Storage Driver: overlayfs / driver-type: io.containerd.snapshotter.v1
+    #    이 방식에서는 /var/lib/docker/image/ 디렉터리 자체가 없다. 레이어를 containerd가
+    #    관리하기 때문이다. 그런데 cAdvisor의 Docker 팩토리는 컨테이너마다
+    #    /var/lib/docker/image/<driver>/layerdb/mounts/<id>/mount-id 에서 RW 레이어를 찾는다.
+    #      "failed to identify the read-write layer ID ... layerdb/mounts/...: no such file"
+    #    이 실패로 모든 컨테이너 등록이 무산되어 name 라벨이 붙지 않는다.
+    #
+    #    --disable_metrics=disk 로는 막히지 않는다. 실패 지점이 디스크 수집이 아니라
+    #    컨테이너 등록(manager.go:1116)이기 때문이다. 실제로 끈 상태에서도 계속 실패했다.
+    #
+    # v0.55.1에서 해결된다 (2026-09-14 실측: name="rag-*" 시계열 11건, 등록 실패 0건).
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: rag-cadvisor
-    # 버전을 올리면 Docker 인식은 되지만 이번엔 스토리지 드라이버에서 막힌다.
-    # 이 호스트는 overlayfs를 쓰는데 cAdvisor는 overlay2의 layerdb 경로를 찾는다.
-    #   "failed to identify the read-write layer ID ... layerdb/mounts/...: no such file"
-    # 그 실패 하나로 컨테이너 등록이 통째로 무산된다. 디스크 지표를 끄면 레이어 조회를
-    # 건너뛴다. 여기서 보려는 것은 CPU·메모리·네트워크라 잃는 것이 없다.
+    # 디스크 지표는 계속 끈다. v0.55.1에서 레이어 조회는 성공하지만 containerd 저장소에서는
+    # container_fs_usage_bytes가 여전히 나오지 않는다(2026-09-14 확인). 켜도 얻는 것이 없다.
+    # 여기서 보려는 것은 CPU·메모리·네트워크다.
     command:
       - --docker_only=true
       - --disable_metrics=disk,diskIO,advtcp,tcp,udp,sched,process,hugetlb,referenced_memory,resctrl
