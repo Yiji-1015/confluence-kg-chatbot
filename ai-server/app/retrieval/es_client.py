@@ -521,6 +521,48 @@ def delete_documents_by_ids(doc_ids: List[str], index_name: Optional[str] = None
         return 0
 
 
+def get_all_indexed_doc_ids(index_name: Optional[str] = None) -> List[str]:
+    """
+    [삭제 동기화용] 현재 색인돼 있는 모든 문서의 doc_id를 모아서 돌려준다.
+
+    Confluence에서 가져온 전체 id 목록과 비교해, ES에만 남아 있는 문서를 찾는 데 쓴다.
+    (= Confluence에서 삭제됐는데 색인에는 남아 있는 문서)
+
+    terms 집계는 size 상한을 넘기면 조용히 잘린 결과를 주므로, 잘림이 없는 composite
+    집계로 끝까지 넘긴다. 목록이 잘리면 멀쩡한 문서를 삭제 대상으로 오판하게 된다.
+    """
+    target_index = index_name or settings.ELASTICSEARCH_INDEX
+    es = get_es_client()
+
+    if not es.indices.exists(index=target_index):
+        return []
+
+    doc_ids: List[str] = []
+    after: Optional[Dict[str, Any]] = None
+
+    while True:
+        composite: Dict[str, Any] = {
+            "size": 1000,
+            "sources": [{"doc_id": {"terms": {"field": "doc_id"}}}],
+        }
+        if after:
+            composite["after"] = after
+
+        res = es.search(index=target_index, body={
+            "size": 0,
+            "aggs": {"docs": {"composite": composite}},
+        })
+        agg = res.get("aggregations", {}).get("docs", {})
+        buckets = agg.get("buckets", [])
+        doc_ids.extend(str(b["key"]["doc_id"]) for b in buckets)
+
+        after = agg.get("after_key")
+        if not after or not buckets:
+            break
+
+    return doc_ids
+
+
 def get_indexed_updated_ats(doc_ids: List[str], index_name: Optional[str] = None) -> Dict[str, str]:
     """
     [증분 색인용] 이미 색인된 문서들의 저장된 updated_at 값을 doc_id 기준으로 모아서 반환하는 함수.

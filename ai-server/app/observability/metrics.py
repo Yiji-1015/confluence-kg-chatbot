@@ -34,10 +34,6 @@ except Exception as _exc:  # pragma: no cover
         return decorator
 
 
-def langfuse_enabled() -> bool:
-    return _LANGFUSE_OK
-
-
 # RAG 단계는 소요 시간의 자릿수가 다르다. ES 검색은 수십 ms, LLM 생성은 수 초~수십 초다.
 # 기본 버킷은 10초에서 끝나 LLM 지연을 전부 마지막 버킷에 몰아넣어 p95를 못 읽는다.
 _BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0)

@@ -531,10 +531,34 @@ index_document_chunks(all_chunks, vectors=vectors)
 
 이 패턴은 `pre/` 프로젝트의 `delete_page_vectors()`에서 가져왔다.
 
-### 3단 · 삭제 동기화
+### 3단 · 삭제 동기화 (2026-09-14 구현)
 
-`delete_documents_by_ids()`가 `delete_by_query` + `terms`로 처리한다.
-Confluence에서 삭제된 문서를 ES에서도 제거한다.
+Confluence의 전체 문서 id와 색인된 전체 `doc_id`를 비교해, **색인에만 남아 있는 문서**를 지운다.
+원본이 사라진 뒤에도 챗봇이 그 문서를 근거로 답하는 것을 막는다.
+
+```python
+live_ids    = set(fetch_all_page_ids())        # Confluence에 현재 있는 문서
+indexed_ids = set(get_all_indexed_doc_ids())   # 색인에 있는 문서
+stale_ids   = indexed_ids - live_ids           # 색인에만 있는 것 = 삭제된 것
+delete_documents_by_ids(list(stale_ids))
+```
+
+2026-09-14 이전에는 `fetch_all_page_ids()`가 이 목적으로 작성돼 있었으나 어디에도
+연결되어 있지 않았다. ES 쪽 목록을 가져오는 함수도 없었다. 두 가지를 채워 연결했다.
+
+**세 가지 안전장치를 뒀다.** 검색 데이터를 지우는 동작이라 잘못 돌면 되돌리기 어렵다.
+
+| 장치 | 이유 |
+|---|---|
+| 전체 스페이스 실행에서만 동작 (`--limit`/`--category`면 건너뜀) | 일부만 수집한 목록으로 비교하면 **수집 범위 밖 문서가 전부 삭제 대상**이 된다 |
+| `fetch_all_page_ids()`가 실패 시 예외를 올림 | 기존에는 예외를 삼키고 부분 목록을 돌려줬다. 그대로 쓰면 "나머지는 삭제된 문서"로 오해한다 |
+| 목록이 비면 건너뜀 | 빈 목록은 "전부 삭제"를 뜻하게 된다 |
+
+`--no-prune`으로 이 단계만 끌 수 있다.
+
+**본문이 없어 청크가 0개인 문서는 이 비교에 걸리지 않는다.** 애초에 색인되지 않으므로
+`indexed_ids`에 없기 때문이다. 실측(2026-09-14): Confluence 651건 / 색인 583건,
+차이 68건은 본문 없는 문서 57건 + 마지막 색인 이후 새로 생긴 11건이며 삭제 대상은 0건이었다.
 
 ## 전체 재색인 경로 (별칭)
 

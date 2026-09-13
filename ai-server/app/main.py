@@ -17,7 +17,7 @@ if settings.LANGFUSE_HOST:
     os.environ["LANGFUSE_BASEURL"] = settings.LANGFUSE_HOST
 
 from app.api.v1.chat import router as chat_router
-from app.observability import metrics_response
+from app.observability import flush_traces, metrics_response
 from app.llm.litellm_client import embed_texts_async
 from app.retrieval.es_client import get_es_client, search_hybrid_async
 
@@ -50,6 +50,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Langfuse 클라이언트는 trace를 모아 뒀다가 보내므로, 종료 시 비우지 않으면
+    # 마지막 요청들의 기록이 그대로 사라진다.
+    flush_traces()
     print("[Shutdown] AI Engine 정상 종료")
 
 

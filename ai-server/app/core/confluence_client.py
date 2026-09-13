@@ -63,6 +63,10 @@ def fetch_all_page_ids(space_key: Optional[str] = None) -> List[str]:
     [페이지네이션]
     한 번의 요청으로는 최대 500개까지만 응답에 담겨오므로, 응답의 _links.next를
     끝까지 따라가며 전체 목록을 수집합니다.
+
+    [실패 시 예외를 던진다]
+    이 목록은 "여기 없는 문서는 삭제된 것"으로 쓰이므로, 일부만 수집하고 성공한 척하면
+    멀쩡한 문서를 지우게 된다. 중간에 실패하면 부분 결과를 버리고 예외를 올린다.
     """
     target_space = space_key or settings.CONFLUENCE_SPACE_KEY
     auth = _get_auth_headers()
@@ -91,7 +95,8 @@ def fetch_all_page_ids(space_key: Optional[str] = None) -> List[str]:
                 params = None  # next_path에 파라미터가 이미 들어있으므로 이후 요청에서는 생략
 
     except Exception as e:
-        print(f"[Confluence Error] 전체 페이지 ID 목록 수집 중 오류 발생: {e}")
+        # 부분 결과를 돌려주면 호출부가 "나머지는 삭제된 문서"로 오해한다.
+        raise RuntimeError(f"전체 페이지 ID 목록 수집 실패: {e}") from e
 
     return page_ids
 

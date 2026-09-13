@@ -1,4 +1,5 @@
 from app.observability.metrics import (
+    flush_traces,
     metrics_response,
     observe_rag,
     record_request,
@@ -9,6 +10,7 @@ from app.observability.metrics import (
 )
 
 __all__ = [
+    "flush_traces",
     "metrics_response",
     "observe_rag",
     "record_request",
