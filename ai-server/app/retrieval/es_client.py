@@ -44,10 +44,10 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
         # Nori 형태소 분석기 및 1536차원 벡터 필드 매핑 정의 (ELASTICSEARCH.md 준수)
         mapping = {
             "settings": {
-                # 단일 노드 배포라 복제본을 두면 그 shard가 영구 unassigned 상태가 되고
-                # 클러스터가 계속 yellow로 남아 진짜 이상 신호를 덮는다.
+                # shard 수는 인덱스를 만들 때만 정할 수 있고 이후 바꿀 수 없어서 여기 둔다.
+                # replica 수는 런타임에 바꿀 수 있고 배포 환경에 따라 달라지는 값이라
+                # 코드에서 정하지 않는다 (운영 기준은 ELASTICSEARCH.md 참고).
                 "number_of_shards": 1,
-                "number_of_replicas": 0,
                 "analysis": {
                     "tokenizer": {
                         # decompound_mode=mixed: 복합명사를 쪼개면서 원형도 함께 남긴다.

@@ -117,7 +117,7 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 | concrete index | `confluence-openai-v3` (2026-09-14 전환. v1 -> v2 -> v3) |
 | read/write alias | `confluence-current` (2026-09-02 연결 완료) |
 | primary shards | `1` |
-| replicas | `0` |
+| replicas | `0` (**운영 설정**. 애플리케이션 코드가 정하지 않는다) |
 | vector field | `text_vector` |
 | vector type | `dense_vector` |
 | dimensions | `1536` |
@@ -129,7 +129,6 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
 {
   "settings": {
     "number_of_shards": 1,
-    "number_of_replicas": 0,
     "analysis": {
       "tokenizer": {
         "ko_nori_tokenizer": { "type": "nori_tokenizer", "decompound_mode": "mixed" }
@@ -176,8 +175,23 @@ OpenAI `text-embedding-3-small`의 기본 1536차원 벡터를 사용한다.
   '줘' 같은 어미가 드물어 IDF가 높고, BM25가 이를 변별력 높은 단어로 취급한다. 실제로 어떤
   질문의 BM25 점수 39.59가 전부 어미에서 나오고 핵심어 기여가 0이었다(2026-09-13 확인).
   stoptags는 Elasticsearch 내장 `nori` 분석기의 기본 목록을 그대로 쓴다.
-- `number_of_replicas`를 명시하지 않으면 ES 기본값 1이 적용되고, 단일 노드에서는 그 shard가
-  영구 unassigned 상태가 되어 클러스터가 계속 yellow로 남는다.
+- **`number_of_replicas`는 위 mapping에 없다.** 배포 환경에 따라 달라지는 값이고 런타임에
+  바꿀 수 있으므로 애플리케이션 코드가 정하지 않는다. 반면 `number_of_shards`는 인덱스를
+  만들 때만 정할 수 있어 코드에 둔다.
+
+  ES 기본값은 `1`이다. 단일 노드에서는 그 replica shard가 배치될 곳이 없어 영구 unassigned
+  상태가 되고 클러스터 health가 yellow로 남는다. **고장이 아니라 정상 동작이다.**
+  이 배포에서는 0으로 두고 있으며, 새 인덱스를 만든 뒤 다음 명령으로 맞춘다.
+
+  ```bash
+  docker exec -i rag-ai-server python -c "
+  from app.retrieval.es_client import get_es_client
+  get_es_client().indices.put_settings(index='<새 인덱스명>',
+      body={'number_of_replicas': 0})
+  "
+  ```
+
+  노드를 늘리면 이 값을 1 이상으로 올린다.
 - 필드 구성과 근거는 `RETRIEVAL.md`에 있다.
 
 - 서로 다른 embedding model의 벡터를 같은 concrete index에 섞지 않는다.
