@@ -81,4 +81,4 @@ docs/           운영·설계 문서
 notebooks/      파서와 검색 실험
 ```
 
-자세한 내용은 `docs/ARCHITECTURE.md`, `docs/COMMANDS.md`, `docs/ELASTICSEARCH.md`를 참고합니다.
+자세한 내용은 `docs/ARCHITECTURE.md`, `docs/RETRIEVAL.md`, `docs/COMMANDS.md`, `docs/ELASTICSEARCH.md`를 참고합니다.

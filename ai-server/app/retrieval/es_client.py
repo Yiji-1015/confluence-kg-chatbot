@@ -291,7 +291,6 @@ def search_hybrid(
        kNN(0~1)을 압도해서 사실상 BM25 단독 검색이 되어버린다. 그래서 두 쿼리를 따로 실행해
        chunk_id 기준으로 각각 0~1 min-max 정규화한 뒤 가중합으로 재랭킹한다.
        가중치는 settings.HYBRID_BM25_WEIGHT : HYBRID_KNN_WEIGHT (기본 4:6).
-       (ES basic 라이선스는 retriever.rrf를 지원하지 않아 RRF 대신 이 방식을 사용)
     """
     target_index = index_name or settings.ELASTICSEARCH_INDEX
     top_k = top_k or settings.RETRIEVAL_TOP_K
