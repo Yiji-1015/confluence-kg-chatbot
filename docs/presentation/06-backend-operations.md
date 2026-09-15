@@ -8,11 +8,11 @@
 
 ```text
 Browser: query + sessionId + X-User-Id
- → Controller: 입력 검증
- → ChatService: 세션 소유자 확인 / 신규 ID 발급
+ → Controller: 요청 수신
+ → ChatService: 세션 처리
  → Redis 최근 이력 조회, 비면 DB에서 복원
  → AiEngineClient: FastAPI 호출
- → ChatPersistenceService: 질문·답변·출처 저장 및 커밋
+ → ChatPersistenceService: 질문·답변·출처 저장
  → Redis에 최근 턴 저장
  → Browser: 답변·출처·sessionId 표시
 ```
@@ -34,49 +34,20 @@ Browser: query + sessionId + X-User-Id
 
 이를 Cache-Aside라고 부른다. 캐시에서 못 찾으면 원본 저장소를 조회해 채워 넣는 방식이다. Redis 만료와 PostgreSQL 대화 삭제는 다르다.
 
-## 3. DB 저장 후 Redis 갱신은 무엇을 보호하는가
-
-DB 트랜잭션은 질문과 답변을 함께 저장한다. 중간에 실패하면 둘을 함께 되돌리려는 경계다. Redis는 이 DB 트랜잭션에 참여하지 않는다.
-
-Redis를 먼저 쓰고 DB 저장이 실패하면 Redis에만 존재하는 대화가 다음 LLM에 들어갈 수 있다. 그래서 DB 저장 메서드가 커밋된 뒤 Redis를 갱신한다. 삭제도 DB 삭제 후 Redis 삭제다.
-
-다만 이것이 두 저장소의 원자적 동기화는 아니다.
-
-- DB 커밋 뒤 Redis 연결 오류가 나면 DB에는 턴이 있는데 요청은 실패할 수 있다.
-- Redis 읽기 연결 오류는 빈 캐시와 다르며 모두 DB 복원으로 처리하지 않는다.
-- Redis 저장은 읽기→리스트 수정→쓰기이므로 같은 세션의 동시 요청에서 갱신 손실 가능성이 있다.
-
-현재 잡는 예외는 주로 JSON 직렬화·역직렬화 오류다. “Redis가 죽어도 무조건 대화 가능”이라고 설명하면 안 된다.
-
-## 4. Spring MVC 책임 분리
+## 3. Spring MVC 책임 분리
 
 | 구성 | 책임 | 코드 |
 |---|---|---|
 | Controller | HTTP 경로·입력·응답 | [ChatController](../../backend/src/main/java/com/yiji/Chatbot/controller/ChatController.java) |
 | Service | 채팅 순서 조율 | [ChatService](../../backend/src/main/java/com/yiji/Chatbot/service/ChatService.java) |
-| PersistenceService | 짧은 DB 트랜잭션 | [ChatPersistenceService](../../backend/src/main/java/com/yiji/Chatbot/service/ChatPersistenceService.java) |
+| PersistenceService | 대화 저장·이력 조회 | [ChatPersistenceService](../../backend/src/main/java/com/yiji/Chatbot/service/ChatPersistenceService.java) |
 | Repository | 엔티티 조회·저장 | [ChatMessageRepository](../../backend/src/main/java/com/yiji/Chatbot/repository/ChatMessageRepository.java) |
 | Mapper | 엔티티·DTO·출처 JSON 변환 | [ChatMapper](../../backend/src/main/java/com/yiji/Chatbot/mapper/ChatMapper.java) |
 | AI client | FastAPI HTTP 요청 | [AiEngineClient](../../backend/src/main/java/com/yiji/Chatbot/service/AiEngineClient.java) |
 
-외부 AI 응답을 기다리는 동안 DB 트랜잭션을 유지하면 연결을 오래 점유할 수 있다. `processChat()` 전체에는 트랜잭션을 붙이지 않고 DB 작업만 별도 서비스 메서드로 분리했다. 별도 빈을 거쳐 호출하는 구조는 Spring 트랜잭션 프록시가 적용되는 경계를 만든다.
-
 API는 POST /api/chat, GET /api/sessions, GET /api/sessions/{id}/messages, DELETE /api/sessions/{id}다. 세션 목록은 기본 50개 페이지 단위, 메시지 목록은 현재 전체 반환이다.
 
-## 5. 사용자 식별·오류·스키마
-
-브라우저 localStorage의 ID를 `X-User-Id` 헤더로 전송한다. [CurrentUserArgumentResolver](../../backend/src/main/java/com/yiji/Chatbot/web/CurrentUserArgumentResolver.java)가 이를 Controller 인자로 주입한다. 소유자가 다른 세션은 404로 처리한다. 이는 로그인 인증이나 문서별 권한 연동이 아니라 클라이언트가 보내는 식별자 비교다.
-
-[GlobalExceptionHandler](../../backend/src/main/java/com/yiji/Chatbot/exception/GlobalExceptionHandler.java)는 입력 오류 400, 세션 없음 404, AI 엔진 실패 502를 ProblemDetail로 반환한다. AI 호출 실패 문구를 성공 답변으로 DB에 저장하지 않는 것이 핵심이다.
-
-[application.yaml](../../backend/src/main/resources/application.yaml)은 Flyway를 켜고 Hibernate는 validate로 둔다. [V1 SQL](../../backend/src/main/resources/db/migration/V1__init_chat_schema.sql)은 세션·메시지 테이블과 외래 키, 다음 조회 인덱스를 만든다.
-
-- `(user_id, updated_at DESC)`: 사용자별 최근 대화방 목록.
-- `(session_id, created_at, message_id)`: 대화 내역·최근 이력 순서 조회.
-
-HTTP 설정은 connect=10초, read 기본 60초, imperative factory=simple이다. [AiClientConfig](../../backend/src/main/java/com/yiji/Chatbot/config/AiClientConfig.java)는 자동 구성된 RestClient.Builder를 받아 관측 설정을 함께 사용한다. 현재 설정 이유와 과거 HTTP/2 업그레이드 문제는 [BACKEND_REVIEW.md](../BACKEND_REVIEW.md)에 기록돼 있다.
-
-## 6. Langfuse와 Prometheus의 관찰 단위
+## 4. Langfuse와 Prometheus의 관찰 단위
 
 [metrics.py](../../ai-server/app/observability/metrics.py)의 `stage()`는 시작 시각을 기록하고, 끝날 때 elapsed를 Histogram에 넣는다. 예외면 단계 오류 카운터를 늘리고 다시 던지며, finally에서 시간은 항상 기록한다. 동시에 Langfuse observation에 단계 metadata를 추가한다.
 
@@ -102,7 +73,7 @@ HTTP 설정은 connect=10초, read 기본 60초, imperative factory=simple이다
 
 Langfuse는 요청 하나를 따라가는 데 쓰고, Prometheus는 여러 요청의 시계열·분포를 모은다. LiteLLM의 success/failure callback은 모델 호출의 토큰·비용 추적용으로 설정돼 있다. FastAPI의 stage metadata 자체가 토큰·비용을 계산하는 것은 아니고, 두 경로의 trace가 완전히 하나로 이어지는지는 실제 기록 확인이 필요하다.
 
-## 7. p95와 Grafana 대시보드
+## 5. p95와 Grafana 대시보드
 
 p95는 측정된 요청 시간의 95%가 그 값 이하였다는 의미다. 평균이 놓치는 느린 요청을 보려는 지표이며 단계별 p95를 더한다고 전체 p95가 되지는 않는다.
 
@@ -120,7 +91,7 @@ FastAPI 히스토그램은 0.05초부터 60초까지 버킷을 지정했다. Spr
 
 JSON과 provisioning을 저장소에 두어 대시보드 구성을 재현한다. DB·Redis·ES의 모든 내부 상태를 수집하는 전용 exporter는 없다. HikariCP 지표도 SQL 텍스트·실행계획을 대신하지 않는다.
 
-## 8. Docker Compose 설정 지도
+## 6. Docker Compose 설정 지도
 
 | 파일 | 역할 |
 |---|---|
@@ -151,6 +122,6 @@ ES는 인증·TLS가 설정되고 9200은 localhost로 바인딩된다. 다만 P
 
 코드 mount는 파일을 공유하는 것이며 uvicorn 자동 reload를 뜻하지는 않는다.
 
-## 9. 이 축을 설명하는 관점
+## 7. 이 축을 설명하는 관점
 
 세션은 “대화의 영구 기록과 빠른 최근 맥락”을 나눈다. Spring은 “HTTP·흐름·DB 작업”을 나눈다. 관측은 “어디에서 시간이 걸리는지”를 기록한다. Docker는 “어떤 설정과 자원으로 함께 실행하는지”를 명시한다. 각 부분의 의도와 실제 보장 범위를 구분해서 설명하면 된다.
