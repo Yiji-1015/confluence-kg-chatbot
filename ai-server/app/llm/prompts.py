@@ -11,6 +11,15 @@ def build_context_text(results: List[Dict[str, Any]]) -> str:
     실서비스(api/v1/chat.py)와 평가(evaluation/run_qa.py)가 각자 이 포맷을 만들다가
     서로 달라지면, 평가 점수가 실서비스와 다른 프롬프트를 측정하게 된다.
     그래서 조립은 여기 한 곳에서만 한다.
+
+    첨부파일명을 반드시 포함한다. 검색은 BM25 필드 `attachments^1.0`으로 첨부명을 보지만,
+    여기서 빼먹으면 **찾아낸 문서의 파일명을 LLM은 볼 수 없다.** "그 파일 있어?" 류의 질문에서
+    문서는 1위로 찾아놓고 "확인할 수 없습니다"라고 답하게 된다
+    (2026-09-16 실측: attachment 축 answer_correctness 0.367, hit은 0.800으로 정상.
+     이 줄을 넣은 뒤 재측정에서 0.600으로 올랐다 — EVALUATION.md 5.4절).
+
+    "파일명만"이라고 명시하는 이유는 첨부파일의 **본문이 색인되지 않기 때문**이다.
+    이걸 알려주지 않으면 파일명만 보고 내용을 지어낸다.
     """
     if not results:
         return NO_CONTEXT_TEXT
@@ -18,7 +27,11 @@ def build_context_text(results: List[Dict[str, Any]]) -> str:
     blocks = []
     for item in results:
         path_info = f" (경로: {item['path']})" if item.get("path") else ""
-        blocks.append(f"[문서 제목: {item.get('title')}{path_info}]\n{item.get('text', '')}")
+        header = f"[문서 제목: {item.get('title')}{path_info}]"
+        attachments = [name for name in (item.get("attachments") or []) if name]
+        if attachments:
+            header += f"\n[첨부파일 — 파일명만 확인 가능, 본문은 색인되지 않음: {', '.join(attachments)}]"
+        blocks.append(f"{header}\n{item.get('text', '')}")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -39,4 +52,17 @@ if __name__ == "__main__":
         {"title": "경로없음", "text": "B"},
     ])
     assert _out == "[문서 제목: 가이드 (경로: 기획 / PoC)]\n본문\n\n---\n\n[문서 제목: 경로없음]\nB"
+
+    # 첨부파일명은 본문 앞에 별도 줄로 들어간다. 빠지면 "그 파일 있어?"에 답할 수 없다.
+    _att = build_context_text([
+        {"title": "취업규칙", "text": "본문", "attachments": ["20260325_취업규칙_V3", "별표1"]},
+    ])
+    assert _att == (
+        "[문서 제목: 취업규칙]\n"
+        "[첨부파일 — 파일명만 확인 가능, 본문은 색인되지 않음: 20260325_취업규칙_V3, 별표1]\n"
+        "본문"
+    ), _att
+    # 빈 값이나 None은 걸러낸다 (색인 실패한 첨부가 빈 문자열로 들어온 적이 있다)
+    assert build_context_text([{"title": "T", "text": "x", "attachments": []}]) == "[문서 제목: T]\nx"
+    assert build_context_text([{"title": "T", "text": "x", "attachments": ["", None]}]) == "[문서 제목: T]\nx"
     print("prompts self-check OK")
