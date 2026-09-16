@@ -617,18 +617,19 @@ item id는 `qa36-001` 형식으로 고정한다. 여러 번 업로드해도 아�
 
 # 5. 측정값
 
-## 5.1 현재 상태 — 없다
+## 5.1 측정했다 — 2026-09-16 `ragas5-baseline`
 
-**RAGAS 5종으로 측정한 값이 아직 없다.** 지표를 교체한 시점(2026-09-16)에 이 저장소에는
-실행 결과가 없고, 이 문서는 수치를 지어내지 않는다.
+RAGAS 5종으로 36문항을 한 번 측정했다. 결과는 5.3절에 있다.
 
 ```bash
+docker compose -f docker-compose.yml -f docker-compose.app.yml up -d ai-server
 docker exec rag-ai-server pip install -r /app/requirements-eval.txt
 docker exec rag-ai-server python -m evaluation.push_dataset_36
-docker exec -e EVAL_RUN_NAME=ragas5-baseline rag-ai-server python -m evaluation.run_qa
+docker exec -e EVAL_RUN_NAME=ragas5-baseline -e EVAL_MAX_CONCURRENCY=2 \
+  rag-ai-server python -m evaluation.run_qa
 ```
 
-이 실행이 끝나면 `_print_metric_table()`의 출력을 5.3절에 그대로 옮긴다.
+`_print_metric_table()`의 출력을 5.3절에 그대로 옮긴다.
 **평균만 옮기지 않는다.** 채점/대상/누락 열을 같이 옮겨야 몇 건 평균인지가 남는다.
 
 ## 5.2 이전 수치를 왜 안 가져왔나
@@ -650,15 +651,63 @@ docker exec -e EVAL_RUN_NAME=ragas5-baseline rag-ai-server python -m evaluation.
 
 ## 5.3 실행 결과
 
-*(비어 있음 — 5.1절의 명령을 돌린 뒤 채운다)*
+**run `ragas5-baseline` / 2026-09-16 / 36문항 / 648문서 코퍼스(`confluence-openai-v3`, 3,493청크)**
+운영 RRF 검색(`RRF_K=60 top_k=5 candidate=50 recency=0.04`), 판정 `solar-judge`,
+`EVAL_MAX_CONCURRENCY=2`. `_print_metric_table()` 출력 그대로다.
 
 | 지표 | 평균 | 채점 | 대상 | 누락 |
 |---|--:|--:|--:|--:|
-| `faithfulness` | | | 36 | |
-| `answer_relevancy` | | | 36 | |
-| `context_precision` | | | 36 | |
-| `context_recall` | | | 36 | |
-| `answer_correctness` | | | 36 | |
+| `faithfulness` | 0.848 | 36 | 36 | 0 |
+| `answer_relevancy` | 0.731 | 36 | 36 | 0 |
+| `context_precision` | 0.547 | 36 | 36 | 0 |
+| `context_recall` | 0.792 | 36 | 36 | 0 |
+| `answer_correctness` | 0.461 | 36 | 36 | 0 |
+
+**채점 누락 없음 — 36문항 전부 채점됐다.** 다섯 지표 모두 분모가 36이라 평균끼리 비교할 수 있다.
+누락이 하나라도 있으면 그 지표의 평균은 36문항 평균이 아니므로 이 표에 같이 놓을 수 없다(3.2절).
+
+Langfuse: dataset run `71ab0a36-dfa0-4250-987b-1a07c749551a`
+(대표 trace `3fea5de8dccfbf4548f1805cf82eb012`, item `qa36-036`).
+
+### `answer_correctness` 0.461을 "사실 정확도 46%"로 읽으면 안 된다
+
+`_print_diagnosis()`가 `answer_correctness < 0.7` 문항을 31건 잡아 이렇게 분류했다.
+
+| 자동 분류 | 건수 |
+|---|--:|
+| 생성 실패 (근거도 맞고 충실한데 사실이 틀림) | 18 |
+| 검색 실패 (정답 근거가 컨텍스트에 없음) | 7 |
+| 생성 실패 (충실하지만 질문에 대답하지 않음) | 4 |
+| 생성 실패 (근거는 있는데 LLM이 근거 없이 답함) | 2 |
+
+**제일 큰 18건은 오분류다.** trace를 직접 열어 확인했다.
+
+`qa36-029`("입사 1년이 지나면 기본 연차는 며칠이야?")는 `recall=1.0 faithfulness=1.0`인데
+`correctness=0.306`이다. 정답 라벨은 "1년 이상 근로자에게는 기본 15일의 연차가 부여된다"
+한 줄이고, 답변은 **"기본 연차는 15일입니다"로 정확히 맞힌다.** 사실이 틀린 것이 아니다.
+점수가 깎인 이유는 답변이 여기서 멈추지 않고 "2년마다 1일씩 가산, 최대 25일, 1년 미만은
+총 11일"을 덧붙이기 때문이다.
+
+RAGAS `AnswerCorrectness`는 답변을 진술 단위로 쪼개 정답 라벨과 대조하고 TP/FP/FN로
+F1을 낸다. **정답 라벨에 없는 진술은 전부 FP로 센다.** `ground_truth_snippet`이 한두 문장짜리
+발췌라(4.2절), 맞는 말을 더 붙일수록 점수가 내려간다. `qa36-030`(회의록)도 같다 — 정답 내용을
+전부 담고도 `correctness=0.497`이다.
+
+그래서 이 값은 **"짧은 발췌 정답 대비 답변이 얼마나 장황한가"가 크게 섞인 값**이다.
+발표에서 단일 수치로 인용하려면 이 점을 함께 말해야 한다. `faithfulness 0.848`과
+`context_recall 0.792`가 높은데 `correctness`만 0.461인 격차 자체가 그 증거다.
+
+**채점기는 건드리지 않았다.** `weights`(0.75/0.25)를 조정하면 점수는 올라가지만 그건
+RAGAS 점수가 아니라 우리가 맞춘 점수가 되고, 0장의 문제가 그대로 재발한다(0.4절).
+고칠 곳은 지표가 아니라 정답 라벨의 상세도이거나 답변 길이 정책이다.
+
+### 검색 실패 7건
+
+`recall=0.0`은 `qa36-008 / 010 / 011 / 019 / 021 / 033 / 034` 7건이다.
+이 중 **`qa36-019`, `qa36-021`은 `not_found` 유형**이라 정답 라벨이 "문서가 존재하지 않음"이고,
+그 문장을 컨텍스트에서 찾을 수는 없으므로 **구조적으로 0이다**(4.2절). 검색이 나빠서가 아니다.
+나머지 5건이 실제 검색 과제이고, `qa36-033`·`qa36-034`는 첨부파일 문항이다
+(첨부파일명을 컨텍스트에 넣는 수정 `a182563`이 적용된 상태에서도 0.0이다).
 
 ---
 
@@ -666,7 +715,7 @@ docker exec -e EVAL_RUN_NAME=ragas5-baseline rag-ai-server python -m evaluation.
 
 ## 6.1 한계
 
-- **아직 한 번도 측정하지 않았다.** 5장. 코드가 도는 것과 지표가 쓸 만한 것은 다른 문제다.
+- **36문항 1회 측정뿐이다.** 5.3절. 두 번째 실행이 없어 문항 단위 변동 폭을 이 지표들에서 직접 확인하지 못했다.
 - **36문항 1회 측정은 노이즈를 못 가린다.** 이전 지표에서 두 run을 비교했을 때 ±0.10짜리
   문항 변동이 6건 생겼다. 판정 LLM을 쓰는 이상 새 지표에서도 같은 폭을 예상해야 하고,
   그보다 작은 차이는 개선으로 읽으면 안 된다.
@@ -683,9 +732,10 @@ docker exec -e EVAL_RUN_NAME=ragas5-baseline rag-ai-server python -m evaluation.
 
 | 우선순위 | 할 일 | 근거 |
 |---|---|---|
-| 1 | **RAGAS 5종 기준선 측정** | 5.1절. 이게 없으면 아래 항목의 근거도 없다 |
+| ~~1~~ | ~~RAGAS 5종 기준선 측정~~ **완료(2026-09-16)** | 5.3절 |
 | 1 | **검색 방식 5종 비교 측정** | 7.8절. "왜 RRF인가"의 근거가 아직 순위 지표뿐이다 |
-| 2 | 축별(`answerability`) 분리 집계 | 4.2절. 5문항이 컨텍스트 지표를 끌어내린다 |
+| 1 | 축별(`answerability`) 분리 집계 | 4.2절. 5문항이 컨텍스트 지표를 끌어내린다. 5.3절에서 `not_found` 2건이 `recall=0.0` 7건 중 2건을 차지하는 것이 확인됐다 |
+| 1 | **정답 라벨 상세도 대비 답변 길이 정책** | 5.3절. `answer_correctness` 0.461의 주된 원인이 사실 오류가 아니라 FP로 세어지는 부가 진술이다 |
 | 3 | `unsupported` 문항의 응답 정책 (#35) | 답하면 안 될 때 답한다. 첨부 본문 미색인을 컨텍스트에 적어도 안 바뀐다 |
 | 4 | `RECENCY_BOOST_MAX` 유지 여부 결정 | 끄면 #33을 되찾지만 근거가 1문항뿐. 새 지표로 다시 재야 한다 |
 | 5 | #11의 1차 후보 회수 개선 (후보 50 밖) | 결합 방식으로는 못 고친다 |
@@ -793,7 +843,22 @@ docker exec rag-ai-server python -m evaluation.compare_methods
 
 ## 7.8 결과
 
-*(비어 있음 — 7.7의 명령을 돌린 뒤 채운다. 숫자를 지어내지 않는다.)*
+**아직 채우지 않았다. 숫자를 지어내지 않는다.**
+
+36문항 전체 측정은 2026-09-16에 시작했고 이 문서를 쓰는 시점에 실행 중이다.
+판정 호출이 360건(36문항 x 5방식 x 2지표)이라 4~5시간이 걸린다.
+끝나면 `_print_comparison()`의 비교 표와 승/패 표를 아래에 그대로 옮긴다.
+
+**3문항 확인 실행은 통과했다**(`COMPARE_LIMIT=3`, 15조합, 채점 누락 없음, `EXIT=0`).
+`retrieval_methods.py`는 그때까지 가짜 ES로만 검증돼 있었는데, 이 실행으로
+**실제 Elasticsearch에 붙어 5방식이 같은 후보 스냅샷 위에서 도는 것이 확인됐다.**
+다만 3문항에서는 다섯 방식의 Hit@5가 전부 0.667로 붙어 아무것도 가리지 못한다.
+7.6절대로 승/패를 셀 수 있는 것은 전체 실행뿐이므로 3문항 수치는 여기 싣지 않는다.
+
+**측정 중 관찰된 것**: 판정 모델(`solar-judge`, Upstage)에서 429가 섞여 나온다.
+LiteLLM에 `solar-judge` fallback 그룹이 없어 429는 그대로 실패로 떨어지지만,
+3문항 실행에서는 재시도로 전부 회수돼 누락이 0이었다. 전체 실행에서 누락이 생기면
+`EVAL_MAX_CONCURRENCY=1`로 낮춰 다시 잰다. **누락이 있는 실행의 평균은 이 표에 쓸 수 없다**(7.5절).
 
 | 방식 | Hit@5 | MRR(top5) | MRR(전체) | context_precision | context_recall |
 |---|--:|--:|--:|--:|--:|
