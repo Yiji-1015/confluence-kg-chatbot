@@ -102,10 +102,10 @@
   {
     "id": 11,
     "category": "semantic",
-    "question": "개발 환경을 로컬로 구성하라고 하는 이유가 뭐야?",
-    "page_id": "27820245",
-    "document_title": "개인 개발환경 구축 가이드 라인",
-    "ground_truth_snippet": "클라우드 환경은 편하지만 개발 환경과 개별 코드가 통일되지 않아 무결성이 깨질 수 있으므로, 가능한 로컬 개발환경 구성을 권장한다.",
+    "question": "익명으로 안전이나 고충을 제보하려면 어떤 방식이 있어?",
+    "page_id": "211255305",
+    "document_title": "안전보건 관리 및 근로자 참여 정책",
+    "ground_truth_snippet": "익명 신고 채널과 설문을 상시 운영하며, 담당자 직접 보고와 사내 게시판 또는 커뮤니케이션 도구로도 의견을 제출할 수 있다.",
     "answerability": "answerable",
     "retrieval_scoring": "positive"
   },
@@ -332,10 +332,10 @@
   {
     "id": 34,
     "category": "semantic",
-    "question": "병렬 검색을 쓰는 이유가 단일 검색의 어떤 한계 때문이야?",
-    "page_id": "152895572",
-    "document_title": "병렬 검색 메인 워크플로우",
-    "ground_truth_snippet": "단일 검색은 질문 표현에 따른 결과 누락, 이전 대화 문맥 미반영, 사용자 의도 해석 부족 문제가 있어 두 검색 전략을 병렬 실행한다.",
+    "question": "이해충돌 가능성이 생기면 회사에서는 어떻게 처리해?",
+    "page_id": "211451957",
+    "document_title": "윤리경영 및 청렴 정책",
+    "ground_truth_snippet": "본인·가족·이해관계자가 회사와 거래 관계에 있으면 즉시 신고해야 하며, 이해충돌이 발생하거나 가능성이 있으면 해당 업무에서 배제될 수 있다.",
     "answerability": "answerable",
     "retrieval_scoring": "positive"
   },
@@ -462,10 +462,10 @@
   {
     "id": 47,
     "category": "conversational",
-    "question": "검색 결과 합친 다음에는 뭐가 관련도 재정렬해?",
-    "page_id": "152895572",
-    "document_title": "병렬 검색 메인 워크플로우",
-    "ground_truth_snippet": "메인 흐름은 병렬 검색, 검색 결과 통합, reranker, LLM 응답 생성 순서이며 reranker가 관련도 기준 재정렬을 담당한다.",
+    "question": "회의록 작성할 때 완벽하게 다 적어야 해?",
+    "page_id": "156368913",
+    "document_title": "컨플루언스 회의록 운영 안내",
+    "ground_truth_snippet": "완벽하지 않아도 핵심 내용만 남겨져 있으면 되며, 무엇을 논의했고 무엇을 결정했고 누가 무엇을 하기로 했는지를 기록한다.",
     "answerability": "answerable",
     "retrieval_scoring": "positive"
   },
