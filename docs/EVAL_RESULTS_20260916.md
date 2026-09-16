@@ -2,9 +2,14 @@
 
 발표용 근거. 결합 방식 비교는 이 문서로 통일한다.
 
-> **이 문서는 검색만 다룬다.** 같은 36문항의 **생성 품질**(faithfulness / correctness /
-> RAGAS)은 Langfuse Experiment `ey-interview-36-rrf-k60-top5-20260916`에서 측정했고
-> 수치는 `EVALUATION.md` 5절에 있다. 여기 중복해서 적지 않는다.
+> **이 문서는 검색만 다룬다.** 같은 36문항의 **생성 품질**은 Langfuse Experiment에서
+> 재는데, 2026-09-16에 채점기를 RAGAS 표준 5종으로 전부 교체하면서 **기준선이
+> 재측정 대기 상태다**(`EVALUATION.md` 0장·5장). 이전 run
+> `ey-interview-36-rrf-k60-top5-20260916`의 생성 점수는 삭제된 자체 채점기의 것이라
+> 인용하지 않는다.
+>
+> **이 문서의 검색 수치는 그 교체와 무관하다.** `retrieval_fusion_comparison.py`가
+> LLM 판정 없이 순위만으로 계산한 값이다.
 
 **측정 조건**
 
