@@ -24,7 +24,7 @@
 23,table,DKMS 설치 시 의존성 누락 이슈 발생 후 확정한 Kernel과 NVIDIA 드라이버 버전은?,372080645,설치 및 배포 가이드,[표: 5. 설치 변경 및 이슈 내역 6번] Kernel 5.14.0-611.41.1.el9_7.x86_64로 통일하고 DKMS 구성을 완료한 뒤 NVIDIA Driver 590.48.01 설치를 재진행,answerable,positive
 24,boundary,신입사원 온보딩 기간 중 연차는 며칠 부여되나요?,23953680,회사 연차 규정이 궁금해요!,"신규 입사자는 1개월 만근 시 1일의 연차가 발생하며, 1년 미만 기간에는 최대 11일이 부여된다.",answerable,positive
 25,boundary,사내 점심 식대 지원 한도는 1인당 얼마인가요?,,,현재 워크스페이스 내에 식대/경비 지원 금액 규정 문서가 존재하지 않음.,not_found,negative
-26,boundary,DO-MINE에서 음성 파일(STT) 전처리 모듈 설정 방법은?,326795267,온보딩_개요,"DO-MINE의 파이프라인(사규, Wiki, Jira, OCR 등) 설명에 음성(STT) 상세 설정법은 기재되어 있지 않음.",unsupported,negative
+26,boundary,DO-MINE에서 음성 파일(STT) 전처리 모듈 설정 방법은?,326795267,온보딩_개요,"DO-MINE의 파이프라인(사규, Wiki, Jira, OCR 등) 설명에 음성(STT) 상세 설정법은 기재되어 있지 않음.",unsupported,positive
 27,boundary,회사 헬스장 이용 시간과 신청 방법 알려줘,,,사내 복지 시설 관련 문서가 존재하지 않음.,not_found,negative
 28,boundary,RAG 2.0 실습에서 Access groups에 사업기획팀 외에 개발팀도 추가해야 하나요?,382173195,데모 플레이북 (DO 2.0),"원문 실습 매뉴얼에는 [사업기획팀]만을 선택하도록 지정되어 있으며, 타 부서 추가 가이드는 없음.",answerable_negative,positive
 29,semantic,2026-05-08 AX Workspace 1차 PoC는 Slack 중심으로 가기로 한 거야?,245170268,AX Workspace - 09 1차 PoC 범위 변경 및 대상 재산정,"정정된 방향은 Platform-first AX Agent PoC with multi-channel intake/output이다. Slack은 중요한 채널이지만 제품의 중심은 아니며, AX Workspace가 업무 원장·검토 화면·승인·이력·감사 로그·산출물 저장소 역할을 한다.",answerable_negative,positive

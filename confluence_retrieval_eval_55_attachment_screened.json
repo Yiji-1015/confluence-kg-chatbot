@@ -257,7 +257,7 @@
     "document_title": "온보딩_개요",
     "ground_truth_snippet": "DO-MINE의 파이프라인(사규, Wiki, Jira, OCR 등) 설명에 음성(STT) 상세 설정법은 기재되어 있지 않음.",
     "answerability": "unsupported",
-    "retrieval_scoring": "negative"
+    "retrieval_scoring": "positive"
   },
   {
     "id": 27,
