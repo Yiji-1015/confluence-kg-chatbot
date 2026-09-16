@@ -55,6 +55,9 @@ services:
       - ./ai-server/evaluation:/app/evaluation:ro
       # 평가 의존성 목록. 이미지에는 없고(서빙에 불필요) 평가 실행 시에만 설치한다.
       - ./ai-server/requirements-eval.txt:/app/requirements-eval.txt:ro
+      # 확정된 36문항 평가셋(저장소 루트의 git 추적본). 평가가 원본을 그대로 읽게 해서
+      # 컨테이너 안에 사본을 두지 않는다. 사본을 두면 질문/정답 라벨이 갈라져도 모른다.
+      - ./confluence_retrieval_eval_36_indexed.json:/app/confluence_retrieval_eval_36_indexed.json:ro
       - ./elasticsearch/certs:/app/elasticsearch/certs:ro
       - ./.env:/app/.env:ro
     mem_limit: 1g
