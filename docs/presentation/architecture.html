@@ -70,6 +70,38 @@
   }
 
   header { display: flex; flex-direction: column; gap: 10px; }
+  .head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .theme-switch {
+    display: inline-flex;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+  }
+  .theme-switch button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .theme-switch button + button { border-left: 1px solid var(--line); }
+  .theme-switch button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--surface);
+  }
+  .theme-switch button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .eyebrow {
     font-family: var(--mono);
     font-size: 11px;
@@ -180,7 +212,13 @@
 
 <div class="wrap">
   <header>
-    <span class="eyebrow">Confluence RAG Chatbot</span>
+    <div class="head-row">
+      <span class="eyebrow">Confluence RAG Chatbot</span>
+      <div class="theme-switch" role="group" aria-label="테마 선택">
+        <button type="button" id="theme-light" data-set="light">라이트</button>
+        <button type="button" id="theme-dark" data-set="dark">다크</button>
+      </div>
+    </div>
     <h1>사내 문서 질의응답 시스템 구조</h1>
     <p class="lede">
       Confluence 문서를 Elasticsearch에 색인하고, BM25 키워드 검색과 벡터 검색을
@@ -358,3 +396,28 @@
     색인 규모는 운영 중인 Elasticsearch에서 직접 집계한 값이고, 검색 설정은 현재 적용된 값이다.
   </footer>
 </div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var buttons = [document.getElementById('theme-light'), document.getElementById('theme-dark')];
+
+    function apply(theme) {
+      root.setAttribute('data-theme', theme);
+      buttons.forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b.dataset.set === theme));
+      });
+      try { localStorage.setItem('arch-theme', theme); } catch (e) { /* 저장 불가여도 화면은 바뀐다 */ }
+    }
+
+    var saved = null;
+    try { saved = localStorage.getItem('arch-theme'); } catch (e) { /* 무시 */ }
+
+    var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    apply(saved === 'light' || saved === 'dark' ? saved : (prefersDark ? 'dark' : 'light'));
+
+    buttons.forEach(function (b) {
+      b.addEventListener('click', function () { apply(b.dataset.set); });
+    });
+  })();
+</script>
