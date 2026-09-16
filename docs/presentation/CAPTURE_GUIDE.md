@@ -79,3 +79,42 @@ python -m pip install -r notebooks/requirements-presentation.txt
 3. 준비된 LF-01, 필요하면 LF-02
 
 이미지 파일명은 `CAP-01.png`, `LF-01.png`처럼 자산 ID와 맞춘다. 실제 촬영한 이미지는 아직 이 저장소에 추가하지 않았다. 원고와 노트북의 CAP ID는 서로 연결되어 있다.
+
+## 6. Grafana 운영 관측 캡처 (발표 6페이지)
+
+실측 데이터가 쌓인 상태에서 캡처한다. 데이터가 없으면 `rate(...[5m])` 패널이 전부 빈다.
+
+**캡처 전 실행**
+
+```bash
+# 1) 서비스와 모니터링 스택이 떠 있는지
+docker ps --format '{{.Names}}\t{{.Status}}' | grep rag-
+curl -s http://localhost:9090/api/v1/targets?state=any | grep -o '"health":"[a-z]*"' | sort | uniq -c
+
+# 2) 실서비스 경로로 트래픽 투입 (평가셋 36문항 재사용, 약 2분)
+python3 scripts/generate_observability_traffic.py          # 단일 턴 36건
+python3 scripts/generate_observability_traffic.py --multiturn   # 멀티턴 5대화 13턴
+```
+
+**Grafana 설정** — `http://localhost:3000` (admin/admin) → 폴더 `Confluence RAG`.
+시간 범위는 **Last 15 minutes**, 새로고침 30s. 기본값 1시간으로 두면 2분짜리 구간이
+한 점으로 뭉쳐 보인다.
+
+| ID | 대시보드 / 화면 | 무엇이 보여야 하는가 |
+|---|---|---|
+| **GR-01** | 04. AI / RAG — 상단 2행 (본문용) | 단계별 p95 4선 + 소요 시간 비중 + 전체 요청 p50/p95/p99 + 단계별 평균. **"RAG 처리 단계별 latency를 관측했다"가 한 화면에서 끝난다.** |
+| GR-02 | 01. Overview — "계층별 지연 분해 (p95)" | backend / ai-server 호출 / LLM 생성 / ES 검색 4선. 계층 간 오버헤드 비교용 |
+| GR-03 | 01. Overview — 상단 4패널 | 서비스 상태 UP 4개, 처리량, 에러율 0, 사용자 체감 p50/p95/p99 |
+| GR-04 | 04. AI / RAG — 하단 | 모델 라우팅 분포, 요청 성공/실패, 검색 문서 수 p50 (보조) |
+
+**본문에는 GR-01 하나만 쓴다.** GR-02~04는 질문 대비용이다.
+
+발표에서 말할 수 있는 것은 "단계별로 계측해 병목이 generation임을 관측했다"까지다.
+`generation`을 줄이는 개선을 했다는 근거는 이 대시보드에 없다.
+
+**주의**
+
+- 캡처 전 멀티턴을 반드시 섞는다. 단일 턴만 보내면 03 대시보드의 Redis 캐시 적중률이
+  0으로 눕는다. 캐시가 고장난 것이 아니라 조회 자체가 없는 것이다.
+- 패널의 수치를 편집하거나 시간 범위를 늘려 선을 매끄럽게 만들지 않는다.
+- 외부 발표 시 Confluence 문서 제목이 보이는 Langfuse 화면은 가린다.

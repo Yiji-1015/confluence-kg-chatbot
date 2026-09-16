@@ -322,3 +322,39 @@ manager.go:1116] Failed to create existing container: /system.slice/docker-<id>.
 - **호스트 자원** — cAdvisor는 컨테이너 단위다. 호스트 전체 CPU/메모리/디스크는
   node_exporter가 필요하나 컨테이너가 하나 더 늘어 지금은 넣지 않았다.
 - **Elasticsearch 내부** — 샤드·세그먼트·쿼리 캐시는 Kibana Stack Monitoring으로 본다.
+
+## 2026-09-16 발표용 전수 검증
+
+5개 대시보드 34패널이 참조하는 metric 이름을 Prometheus의 `__name__` 목록과 대조하고,
+패널 쿼리를 그대로 `/api/v1/query`에 던져 실값이 오는지 확인했다.
+
+**결과: 34패널 전부 실값을 돌려준다.** 존재하지 않는 metric은 `rag_stage_errors_total`
+하나였고, 이는 단계 예외가 한 번도 없어 시계열이 생성되지 않은 것이다(패널에
+`absent(rag_stage_errors_total) * 0`이 이미 들어 있어 "실패 없음" 0선으로 그려진다).
+
+**트래픽.** 36문항 평가셋을 2회 + 멀티턴 5대화 13턴, 총 85건을 실서비스 경로
+(`POST /api/chat` -> Spring -> `POST /internal/chat`)로 실행했다. 전부 200이다.
+AI 엔진을 직접 때리면 `http_server_requests`·`http_client_requests`가 안 쌓여
+01 Overview와 04의 전체 지연 패널이 빈다.
+
+| 구간 | 평균 | p95 |
+|---|---|---|
+| embedding | 0.392s | 0.872s |
+| search | 0.094s | 0.223s |
+| context_build | 0.0004s | 0.048s |
+| generation | 2.457s | 4.780s |
+| 전체 요청(백엔드->AI) | — | p50 2.884s / p95 4.495s / p99 5.480s |
+
+`generation`이 단계 소요 시간의 81%다. 검색은 0.09초로 병목이 아니다.
+
+**04 대시보드에 "전체 요청 지연 p50 / p95 / p99" 패널을 추가했다.**
+`http_client_requests_seconds_bucket{uri="/internal/chat"}` 기준이다. 단계별 지연과
+전체 지연이 한 화면에 없어서 "단계 합 + HTTP 왕복"을 눈으로 대조할 수 없었다.
+
+**검증 중 확인한 두 가지**
+
+- `rag-elasticsearch` 메모리가 limit의 93.5%다. 재시작·스로틀 징후는 없지만
+  05 Infrastructure에서 계속 봐야 할 값이다.
+- Redis 대화 이력 캐시 적중률은 **멀티턴 트래픽에서만 오른다.** 단일 턴 요청만 보내면
+  캐시를 조회할 일이 없어 패널이 0으로 눕는다(멀티턴 13턴 실행 후 hit 100 / miss 2).
+  캡처 전에 반드시 멀티턴을 섞는다.
