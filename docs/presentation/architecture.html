@@ -1,0 +1,360 @@
+<title>Confluence RAG 아키텍처</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #f4f7fa;
+    --surface: #ffffff;
+    --surface-2: #eef2f7;
+    --ink: #121920;
+    --muted: #5b6b7d;
+    --line: #d4dde7;
+    --line-strong: #b6c3d2;
+    --accent: #0b6d80;
+    --accent-soft: #e2f1f4;
+    --accent-2: #8a5a08;
+    --accent-2-soft: #f6eddc;
+    --store: #f0f3f8;
+    --store-line: #c2cedd;
+    --sans: "IBM Plex Sans KR", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0e141a;
+      --surface: #161e27;
+      --surface-2: #1c2531;
+      --ink: #e4ebf3;
+      --muted: #94a4b6;
+      --line: #2a3542;
+      --line-strong: #3a4756;
+      --accent: #4bbdd1;
+      --accent-soft: #10323a;
+      --accent-2: #dfa646;
+      --accent-2-soft: #33280f;
+      --store: #1b242f;
+      --store-line: #35424f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0e141a;
+    --surface: #161e27;
+    --surface-2: #1c2531;
+    --ink: #e4ebf3;
+    --muted: #94a4b6;
+    --line: #2a3542;
+    --line-strong: #3a4756;
+    --accent: #4bbdd1;
+    --accent-soft: #10323a;
+    --accent-2: #dfa646;
+    --accent-2-soft: #33280f;
+    --store: #1b242f;
+    --store-line: #35424f;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 40px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(24px, 4.4vw, 34px);
+    font-weight: 600;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+  }
+  .lede { margin: 0; color: var(--muted); max-width: 62ch; }
+
+  section { display: flex; flex-direction: column; gap: 16px; }
+  h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .scroller { overflow-x: auto; }
+  svg.topology { display: block; min-width: 760px; width: 100%; height: auto; }
+
+  .n-box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+  .n-box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.3; }
+  .n-store { fill: var(--store); stroke: var(--store-line); stroke-width: 1.2; }
+  .n-obs { fill: var(--accent-2-soft); stroke: var(--accent-2); stroke-width: 1.1; }
+  .t-title { fill: var(--ink); font-family: var(--sans); font-size: 13px; font-weight: 600; }
+  .t-sub { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+  .t-edge { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+  .edge { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  .edge-soft { stroke: var(--line-strong); stroke-width: 1.3; fill: none; }
+  .edge-dot { stroke: var(--accent-2); stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+  .head-accent { fill: var(--accent); }
+  .head-soft { fill: var(--line-strong); }
+  .head-obs { fill: var(--accent-2); }
+
+  ol.steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+  ol.steps li {
+    background: var(--surface);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .step-n {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .step-h { font-weight: 600; font-size: 14px; }
+  .step-b { color: var(--muted); font-size: 13px; }
+  .step-b code {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--surface-2);
+    padding: 1px 5px;
+  }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  caption {
+    text-align: left;
+    color: var(--muted);
+    font-size: 12.5px;
+    padding-bottom: 10px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  thead th {
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  td.num, td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td.num { text-align: right; white-space: nowrap; }
+
+  footer {
+    color: var(--muted);
+    font-size: 12.5px;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+  footer code { font-family: var(--mono); color: var(--ink); }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Confluence RAG Chatbot</span>
+    <h1>사내 문서 질의응답 시스템 구조</h1>
+    <p class="lede">
+      Confluence 문서를 Elasticsearch에 색인하고, BM25 키워드 검색과 벡터 검색을
+      RRF로 결합한 결과를 근거로 답변합니다. 아래 수치는 모두 현재 실행 중인 설정과 색인에서 읽은 값입니다.
+    </p>
+  </header>
+
+  <section>
+    <h2>서비스 구성</h2>
+    <div class="scroller">
+      <svg class="topology" viewBox="0 0 1000 470" role="img"
+           aria-label="브라우저에서 Spring Boot를 거쳐 FastAPI로, FastAPI에서 Elasticsearch와 LiteLLM으로 이어지는 구조도">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="head-accent" d="M 0 0 L 10 5 L 0 10 z" />
+          </marker>
+          <marker id="ah-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="head-soft" d="M 0 0 L 10 5 L 0 10 z" />
+          </marker>
+          <marker id="ah-obs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="head-obs" d="M 0 0 L 10 5 L 0 10 z" />
+          </marker>
+        </defs>
+
+        <!-- 브라우저 -->
+        <rect class="n-box" x="16" y="150" width="108" height="58" rx="3" />
+        <text class="t-title" x="70" y="174" text-anchor="middle">브라우저</text>
+        <text class="t-sub" x="70" y="192" text-anchor="middle">Web UI</text>
+
+        <!-- Spring Boot -->
+        <rect class="n-box" x="156" y="138" width="158" height="82" rx="3" />
+        <text class="t-title" x="235" y="168" text-anchor="middle">Spring Boot</text>
+        <text class="t-sub" x="235" y="186" text-anchor="middle">:8080</text>
+        <text class="t-sub" x="235" y="203" text-anchor="middle">세션 · 메시지 · UI</text>
+
+        <!-- 저장소 -->
+        <rect class="n-store" x="156" y="256" width="74" height="46" rx="3" />
+        <text class="t-title" x="193" y="278" text-anchor="middle">Redis</text>
+        <text class="t-sub" x="193" y="294" text-anchor="middle">최근 이력</text>
+
+        <rect class="n-store" x="240" y="256" width="74" height="46" rx="3" />
+        <text class="t-title" x="277" y="278" text-anchor="middle">Postgres</text>
+        <text class="t-sub" x="277" y="294" text-anchor="middle">영속화</text>
+
+        <!-- FastAPI -->
+        <rect class="n-box-accent" x="352" y="138" width="170" height="82" rx="3" />
+        <text class="t-title" x="437" y="168" text-anchor="middle">FastAPI AI Engine</text>
+        <text class="t-sub" x="437" y="186" text-anchor="middle">:8000</text>
+        <text class="t-sub" x="437" y="203" text-anchor="middle">검색 · 컨텍스트 · 생성</text>
+
+        <!-- Elasticsearch -->
+        <rect class="n-box" x="568" y="40" width="216" height="92" rx="3" />
+        <text class="t-title" x="676" y="66" text-anchor="middle">Elasticsearch</text>
+        <text class="t-sub" x="676" y="84" text-anchor="middle">Nori BM25 + dense kNN</text>
+        <text class="t-sub" x="676" y="101" text-anchor="middle">confluence-current</text>
+        <text class="t-sub" x="676" y="118" text-anchor="middle">648 문서 / 3,493 청크</text>
+
+        <!-- LiteLLM -->
+        <rect class="n-box" x="568" y="228" width="216" height="64" rx="3" />
+        <text class="t-title" x="676" y="254" text-anchor="middle">LiteLLM</text>
+        <text class="t-sub" x="676" y="272" text-anchor="middle">:4000 · 모델 라우팅</text>
+
+        <!-- Providers -->
+        <rect class="n-box" x="826" y="220" width="158" height="80" rx="3" />
+        <text class="t-title" x="905" y="246" text-anchor="middle">모델 제공자</text>
+        <text class="t-sub" x="905" y="264" text-anchor="middle">deepseek-chat</text>
+        <text class="t-sub" x="905" y="281" text-anchor="middle">gpt-4o · embedding</text>
+
+        <!-- 관측 -->
+        <rect class="n-obs" x="352" y="378" width="170" height="52" rx="3" />
+        <text class="t-title" x="437" y="402" text-anchor="middle">Langfuse</text>
+        <text class="t-sub" x="437" y="419" text-anchor="middle">trace · 평가</text>
+
+        <rect class="n-obs" x="568" y="378" width="216" height="52" rx="3" />
+        <text class="t-title" x="676" y="402" text-anchor="middle">Prometheus · Grafana</text>
+        <text class="t-sub" x="676" y="419" text-anchor="middle">지연 · 처리량</text>
+
+        <!-- 연결선 -->
+        <path class="edge" d="M 124 179 L 150 179" marker-end="url(#ah)" />
+        <path class="edge" d="M 314 179 L 346 179" marker-end="url(#ah)" />
+        <text class="t-edge" x="330" y="170" text-anchor="middle">/internal/chat</text>
+
+        <path class="edge-soft" d="M 193 220 L 193 250" marker-end="url(#ah-soft)" />
+        <path class="edge-soft" d="M 277 220 L 277 250" marker-end="url(#ah-soft)" />
+
+        <path class="edge" d="M 522 162 C 546 162, 546 86, 562 86" marker-end="url(#ah)" />
+        <text class="t-edge" x="545" y="124" text-anchor="middle">검색</text>
+
+        <path class="edge" d="M 522 196 C 546 196, 546 260, 562 260" marker-end="url(#ah)" />
+        <text class="t-edge" x="544" y="228" text-anchor="middle">임베딩 · 생성</text>
+
+        <path class="edge" d="M 784 260 L 820 260" marker-end="url(#ah)" />
+
+        <path class="edge-dot" d="M 415 220 L 415 372" marker-end="url(#ah-obs)" />
+        <text class="t-edge" x="424" y="300" text-anchor="start">trace</text>
+
+        <path class="edge-dot" d="M 620 372 L 500 224" marker-end="url(#ah-obs)" />
+        <text class="t-edge" x="586" y="318" text-anchor="start">/metrics</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>질문 하나가 지나가는 길</h2>
+    <ol class="steps">
+      <li>
+        <span class="step-n">01</span>
+        <span class="step-h">모델 라우팅</span>
+        <span class="step-b">질문이 <code>12자</code> 미만이거나 이력 포함 <code>1000자</code> 이상이면 <code>gpt-4o</code>, 그 외에는 <code>deepseek-chat</code>.</span>
+      </li>
+      <li>
+        <span class="step-n">02</span>
+        <span class="step-h">검색 질의 구성</span>
+        <span class="step-b">최근 <code>1턴</code>을 반영해 검색어만 다시 만든다. 답변 생성에는 원본 질문을 그대로 쓴다.</span>
+      </li>
+      <li>
+        <span class="step-n">03</span>
+        <span class="step-h">질문 임베딩</span>
+        <span class="step-b"><code>text-embedding-3-small</code>로 <code>1536차원</code> 벡터를 만든다.</span>
+      </li>
+      <li>
+        <span class="step-n">04</span>
+        <span class="step-h">하이브리드 검색</span>
+        <span class="step-b">BM25(제목 <code>2.0배</code>)와 kNN이 각각 <code>50청크</code>를 가져오고, 순위만 쓰는 <code>RRF(K=60)</code>로 합친 뒤 최신성 가산점을 얹어 문서 <code>5개</code>를 고른다.</span>
+      </li>
+      <li>
+        <span class="step-n">05</span>
+        <span class="step-h">컨텍스트 조립</span>
+        <span class="step-b">고른 문서의 청크를 다시 이어 붙인다. 문서당 최대 <code>3000자</code>.</span>
+      </li>
+      <li>
+        <span class="step-n">06</span>
+        <span class="step-h">답변 생성</span>
+        <span class="step-b">LiteLLM을 거쳐 라우팅된 모델을 호출하고, 답변과 출처 문서를 함께 돌려준다.</span>
+      </li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>검색 설정</h2>
+    <table>
+      <caption>운영 중인 값. 재색인 없이 환경 변수로 바꾼다.</caption>
+      <thead>
+        <tr><th scope="col">항목</th><th scope="col">값</th><th scope="col">왜 이 값인가</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">RRF_K</td><td class="num">60</td><td>점수가 아니라 순위로 합치므로 BM25와 kNN의 스케일을 맞출 필요가 없다</td></tr>
+        <tr><td class="mono">RETRIEVAL_CANDIDATE_SIZE</td><td class="num">50</td><td>후보 풀이 좁으면 한쪽에만 든 청크가 0점 취급돼 하위권과 구분되지 않는다</td></tr>
+        <tr><td class="mono">RETRIEVAL_TOP_K</td><td class="num">5</td><td>컨텍스트에 넣을 서로 다른 <em>문서</em> 수</td></tr>
+        <tr><td class="mono">DOC_CONTEXT_MAX_CHARS</td><td class="num">3,000</td><td>문서 하나가 컨텍스트를 독점하지 않게 자른다</td></tr>
+        <tr><td class="mono">RECENCY_BOOST_MAX</td><td class="num">0.04</td><td>RRF 최고점의 일부만 얹는다. 절대값을 그대로 더하면 가산점이 순위를 뒤집는다</td></tr>
+        <tr><td class="mono">SEARCH_HISTORY_TURNS</td><td class="num">1</td><td>검색어에 반영할 직전 대화 턴 수</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>배포 계층</h2>
+    <table>
+      <caption>모든 서비스는 하나의 Docker 네트워크에서 서비스 이름으로 통신한다.</caption>
+      <thead>
+        <tr><th scope="col">계층</th><th scope="col">서비스</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Core</td><td>PostgreSQL, Redis</td></tr>
+        <tr><td>Search</td><td>Elasticsearch, Kibana</td></tr>
+        <tr><td>Gateway</td><td>LiteLLM</td></tr>
+        <tr><td>App</td><td>FastAPI, Spring Boot</td></tr>
+        <tr><td>Monitoring</td><td>Prometheus, Grafana, cAdvisor</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    색인 규모는 운영 중인 Elasticsearch에서 직접 집계한 값이고, 검색 설정은 현재 적용된 값이다.
+  </footer>
+</div>
