@@ -212,6 +212,41 @@ def search_with_method(
     return picked
 
 
+def ranked_doc_ids(
+    method: str,
+    query_text: str,
+    query_vector: Optional[List[float]] = None,
+) -> List[str]:
+    """
+    그 방식이 매긴 **전체 문서 순위**를 돌려준다 (top_k로 자르기 전).
+
+    `search_with_method`는 top_k개만 돌려주므로 정답 문서가 6위인지 30위인지 구분하지
+    못한다. MRR을 전체순위 기준으로도 적으려면 잘리지 않은 순위가 필요하다.
+    후보는 캐시에서 오므로 ES를 다시 부르지 않는다.
+    """
+    bm25_hits, knn_hits = _candidates(query_text, query_vector)
+    sources, scores = fuse(method, bm25_hits, knn_hits)
+
+    scored = [{"doc_id": source.get("doc_id"),
+               "score": scores.get(chunk_id, 0.0),
+               "updated_at": source.get("updated_at")}
+              for chunk_id, source in sources.items()]
+
+    if method == "rrf_recency":
+        _apply_recency_bonus(scored, settings.RECENCY_BOOST_MAX)
+
+    scored.sort(key=lambda entry: entry["score"], reverse=True)
+
+    ordered: List[str] = []
+    seen: set = set()
+    for entry in scored:
+        doc_id = entry["doc_id"]
+        if doc_id and doc_id not in seen:
+            seen.add(doc_id)
+            ordered.append(doc_id)
+    return ordered
+
+
 def _self_check() -> None:
     """ES 없이 결합 계산만 확인한다. 실행: python -m evaluation.retrieval_methods"""
     def hit(chunk_id, doc_id, score):

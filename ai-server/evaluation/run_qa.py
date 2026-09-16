@@ -227,6 +227,18 @@ def _ragas_metrics():
     return _RAGAS
 
 
+# span 생성이 한 번 실패하면 그 뒤로는 시도하지 않는다.
+# Langfuse가 설정되지 않은 채로 돌리면(예: 비교 스크립트) 호출마다 SDK가
+# "Authentication error ..."를 찍는다. 36문항 x 5방식 x 2지표면 수백 줄이 쏟아져
+# 정작 봐야 할 표와 경고가 스크롤 밖으로 밀린다. 한 번만 알리고 끈다.
+_SPANS = {"enabled": True}
+
+
+def disable_eval_spans() -> None:
+    """채점 span을 끈다. Langfuse Experiment 밖에서 채점기를 재사용할 때 쓴다."""
+    _SPANS["enabled"] = False
+
+
 @contextlib.contextmanager
 def _eval_span(name: str, fields):
     """
@@ -237,6 +249,10 @@ def _eval_span(name: str, fields):
     같은 내용이 이미 `rag.context_build`에 있다. 길이와 건수만 남겨 어느 문항이
     무거웠는지 가늠할 수 있게 한다.
     """
+    if not _SPANS["enabled"]:
+        yield None
+        return
+
     contexts = fields.get("retrieved_contexts") or []
     metadata = {
         "metric": name,
@@ -253,8 +269,11 @@ def _eval_span(name: str, fields):
         span_cm = get_client().start_as_current_observation(
             name=f"eval.{name}", as_type="evaluator")
         span = span_cm.__enter__()
-    except Exception:
+    except Exception as exc:
         span_cm = None
+        _SPANS["enabled"] = False
+        print(f"[eval span] 생성 실패로 이후 채점은 span 없이 진행합니다: "
+              f"{type(exc).__name__}: {exc}")
 
     try:
         yield span

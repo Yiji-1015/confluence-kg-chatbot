@@ -63,6 +63,27 @@ docker exec -e EVAL_RUN_NAME=ragas5-baseline rag-ai-server python -m evaluation.
 판정 모델에 보낸 프롬프트와 받은 응답까지 trace에 남기려면 `-e EVAL_TRACE_JUDGE=1`
 (기본 꺼짐 — `docs/EVALUATION.md` 2.3절).
 
+### 검색 방식 비교 (BM25 / kNN / min-max / RRF)
+
+"왜 이 검색 방식인가"에 답하는 별도 측정이다. 같은 36문항에서 방식 5종을 돌려
+Hit@5·MRR과 RAGAS 컨텍스트 지표 2종을 **한 표**에 놓는다. 답변을 생성하지 않으므로
+검색 변수만 분리된다 (`docs/EVALUATION.md` 7장).
+
+```bash
+# 먼저 3문항만 (판정 호출이 확 줄어든다)
+docker exec -e COMPARE_LIMIT=3 rag-ai-server python -m evaluation.compare_methods
+
+# 전체
+docker exec rag-ai-server python -m evaluation.compare_methods
+```
+
+산출물은 `compare_methods_ragas.csv` / `.json`이다.
+결합 계산만 ES 없이 확인하려면:
+
+```bash
+docker exec rag-ai-server python -m evaluation.retrieval_methods
+```
+
 PowerShell에서는 `&&`를 쓸 수 없으므로 두 줄로 나눠 실행하거나 `;`로 잇는다.
 데이터셋을 고쳤다면 실행 전에 Langfuse로 올려야 반영된다.
 
