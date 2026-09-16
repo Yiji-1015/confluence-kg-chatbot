@@ -8,16 +8,19 @@
 하는 일은 **키 이름 맞추기뿐**이다. 질문(`question`)과 정답 라벨
 (`ground_truth_snippet`, `page_id`)의 값은 한 글자도 건드리지 않는다.
 
-| 원본 필드 | Langfuse item |
-|---|---|
-| `question` | `input` |
-| `ground_truth_snippet` | `expected_output` (answer_correctness 채점 기준) |
-| `page_id` | `metadata.expected_doc_ids` (retrieval_hit / retrieval_mrr 채점 기준) |
+| 원본 필드 | Langfuse item | 쓰이는 곳 |
+|---|---|---|
+| `question` | `input` | RAGAS 5종 전부의 `user_input` |
+| `ground_truth_snippet` | `expected_output` | context_precision / context_recall / answer_correctness의 `reference` |
+| `page_id` | `metadata.expected_doc_ids` | 채점에는 안 쓴다 |
 
-`page_id`가 빈 문자열인 문항(not_found 3건)은 `expected_doc_ids`가 빈 리스트가 되고,
-`run_qa._scorable_expected_ids()`가 그 문항을 검색 지표 채점 대상에서 뺀다.
-정답 문서 자체가 없는 질문이라 hit/MRR을 매기면 구조적으로 0점이 되기 때문이다.
-답변 지표(faithfulness / correctness)는 이 문항들도 그대로 채점한다.
+`page_id`는 2026-09-16까지 `retrieval_hit` / `retrieval_mrr`의 채점 기준이었다. 두 지표가
+RAGAS 표준 5종으로 교체되면서 사라졌고, 남은 채점기는 문서 id가 아니라 **내용**을 본다
+(`context_recall`이 "정답 문장이 컨텍스트에 있는가"를 직접 본다).
+
+**필드는 지우지 않는다.** 검색이 무엇을 가져왔는지 실패 문항에서 대조할 때 쓰고,
+`retrieval_fusion_comparison.py`가 결합 방식을 비교할 때도 같은 라벨을 쓴다.
+빈 문자열인 문항(not_found 3건)은 빈 리스트가 된다.
 """
 import json
 from pathlib import Path
@@ -90,9 +93,12 @@ def load_items() -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     items = load_items()
-    scorable = sum(1 for i in items if i["metadata"]["expected_doc_ids"])
     with_reference = sum(1 for i in items if (i["expected_output"] or "").strip())
+    with_page_id = sum(1 for i in items if i["metadata"]["expected_doc_ids"])
     print(f"파일: {dataset_path()}")
     print(f"문항: {len(items)}건")
-    print(f"검색 지표 채점 대상(expected_doc_ids 있음): {scorable}건")
-    print(f"answer_correctness 채점 대상(expected_output 있음): {with_reference}건")
+    # reference를 요구하는 세 지표(context_precision / context_recall / answer_correctness)의
+    # 채점 대상. 36건이 아니면 그 지표들의 평균 분모가 36이 아니게 된다.
+    print(f"reference(expected_output) 있음: {with_reference}건 / {len(items)}건")
+    # 채점에는 안 쓴다. 실패 문항 대조와 결합 방식 비교 스크립트가 쓰는 라벨이다.
+    print(f"page_id 있음(참고용): {with_page_id}건 / {len(items)}건")

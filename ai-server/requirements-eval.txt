@@ -5,6 +5,11 @@
 # 설치 (PowerShell / bash 공통):
 #   docker exec rag-ai-server pip install -r /app/requirements-eval.txt
 # 컨테이너 재생성 시 사라지므로 평가 전에 매번 실행한다.
+#
+# 평가 점수는 전부 이 패키지가 계산한다 (run_qa.py에는 채점 로직이 없다).
+# 따라서 버전을 올리면 지표 구현이 바뀌어 이전 실행과 비교할 수 없게 된다.
+# 올릴 때는 EVALUATION.md 5장의 기준선을 같이 다시 잰다.
+# openai / langchain-core 등은 ragas가 의존성으로 끌고 오므로 따로 적지 않는다.
 
 ragas==0.4.3
 

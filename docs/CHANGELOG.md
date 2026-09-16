@@ -4,6 +4,77 @@
 
 ## 2026-09-16
 
+### 평가 채점기를 RAGAS 표준 5종으로 전부 교체했다
+
+`run_qa.py`의 채점기 6종을 지우고 `ragas.metrics.collections`의 5종으로 갈았다.
+
+| 지웠다 | 무엇이었나 |
+|---|---|
+| `answer_faithfulness` | **자체.** 판정 모델에게 "SCORE: 숫자"를 요구한 프롬프트 한 방 |
+| `answer_correctness` | **자체.** 같은 방식 |
+| `retrieval_hit` | 자체. `any()` 비교 |
+| `retrieval_mrr` | 자체. `1/rank` |
+| `ragas_faithfulness` | RAGAS `Faithfulness` — 계산은 유지, 이름만 `faithfulness`로 |
+| `ragas_context_precision` | RAGAS이지만 **reference를 안 보는** `ContextPrecisionWithoutReference` |
+
+| 넣었다 | 클래스 |
+|---|---|
+| `faithfulness` | `Faithfulness` |
+| `answer_relevancy` | `AnswerRelevancy` |
+| `context_precision` | `ContextPrecision` (= `ContextPrecisionWithReference`) |
+| `context_recall` | `ContextRecall` |
+| `answer_correctness` | `AnswerCorrectness` |
+
+**문제는 자체 지표 두 개였다.** 구현이 이랬다.
+
+```python
+judge_prompt = ("... 0.0 ~ 1.0 사이 점수를 아래 형식으로만 출력하세요:\n"
+                "SCORE: <숫자>\nREASON: <한 줄 이유>")
+score = float(_SCORE_RE.search(raw).group(1))
+score = max(0.0, min(1.0, score))
+```
+
+0.2와 0.4를 가르는 기준이 없다. 답변을 주장 단위로 쪼개지도, 컨텍스트와 대조하지도, 정답과
+사실 단위로 맞춰보지도 않는다. 모델이 부른 숫자를 정규식으로 긁어 0~1로 자른 값이다.
+
+**못 알아챈 이유는 이름이다.** RAGAS에 `faithfulness`와 `answer_correctness`가 실제로
+있는데 자체 구현에 거의 같은 이름을 붙였다. 대시보드에서 `answer_correctness 0.839`를 보면
+표준 지표로 읽힌다. 문서도 여섯을 한 표에 놓고 `(자체)` / `(표준)` 각주로만 갈랐고,
+자체 지표를 표준과 **"교차 검증"한다**고 써서 둘을 대등하게 보이게 했다.
+
+결정적으로 **인용하던 대표 숫자가 자체 지표 쪽이었다.** 첨부파일명 수정의 효과로 보고한
+`answer_correctness 0.800 → 0.839`가 그 값이다. 근거로 삼기에 부족하다.
+
+`ragas_context_precision`은 RAGAS 구현이 맞지만 정답 라벨을 안 보는 변형이었다.
+답변이 틀려도 그 틀린 답변에 들어맞는 문서를 가져오면 점수가 오른다. 36문항 전부
+`ground_truth_snippet`이 있는데도 쓰지 않고 있었다.
+
+**재발 방지는 규칙으로 뒀다.** 점수를 만드는 코드를 이 저장소에 두지 않는다. `run_qa.py`에는
+프롬프트도 파싱도 가중치도 없고, 하는 일은 파이프라인 출력을 RAGAS 입력 필드에 맞춰 넘기는
+것뿐이다. 지표 생성자에 `llm`과 `embeddings` 말고 아무것도 넘기지 않는다
+(`strictness`, `weights` 0.75/0.25, `beta` 전부 라이브러리 기본값). Langfuse에 남는 점수
+이름도 RAGAS 인스턴스의 `.name`을 그대로 쓴다.
+
+**딸려온 변경**
+
+- `answer_relevancy`와 `answer_correctness`가 임베딩을 요구한다. 색인에 쓴 것과 같은
+  모델(`embedding-openai`)을 LiteLLM 게이트웨이를 통해 넘긴다. 게이트웨이를 거쳐야
+  재시도·폴백과 Langfuse 콜백이 그대로 걸린다.
+- `context_precision`과 `context_recall`은 받는 인자가 같은데 **순서가 다르다.**
+  위치 인자로 넘기면 `reference`와 `retrieved_contexts`가 뒤바뀌어도 타입이 맞아 조용히
+  통과하므로 전부 키워드로 넘긴다.
+- `_print_diagnosis()`의 첫 갈래를 `retrieval_hit == 0`에서 `context_recall < 0.5`로 바꿨다.
+  문서를 찾았어도 필요한 대목이 컨텍스트에 안 실렸으면 검색 실패로 잡힌다. 아래 첨부파일명
+  누락이 정확히 그 경우였고 옛 분기는 "이해·추론 실패"로 잘못 분류했다.
+- run 이름 접두사를 `qa-`에서 `ragas5-`로 바꿨다. Langfuse 목록에서 옛 run과 섞이지 않게 한다.
+- `_preflight()`가 5종이 다 만들어졌는지 확인하고 하나라도 없으면 시작하지 않는다.
+  이제 채점기가 전부 RAGAS라 없으면 기록할 점수가 하나도 없다.
+
+**측정값은 아직 없다.** 지표를 바꿨으니 이전 수치는 이어지지 않는다
+(`ragas_faithfulness` → `faithfulness` 하나만 계산이 같다). `EVALUATION.md` 5장을
+비워 두고 재측정 후 채운다. 이전 값들은 이 문서에 이력으로 남긴다.
+
+
 ### 첨부파일 색인 범위를 문서 형식 전반으로 넓히고 가중치를 1.0으로 내렸다
 
 pdf/excel에 더해 `pptx` `ppt` `docx` `doc` `hwp` `hwpx`를 색인 대상에 넣었다.

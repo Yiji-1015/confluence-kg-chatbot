@@ -51,19 +51,21 @@ https://jp.cloud.langfuse.com/project/cmt0xmxjm000vad0djmng1vvn/datasets/cmu3t4s
 ```
 
 사이드바로 가려면 **Datasets → `confluence-rag-qa-36-indexed`**.
-여기 **Runs** 탭에 실행이 한 줄씩 쌓여 있고, 줄마다 Item Count와 6개 지표 평균이 붙는다.
-run이 두 개이므로 **수정 전/후가 한 표에 나란히 잡힌다.** 이 한 장이 발표의 핵심 근거다.
+여기 **Runs** 탭에 실행이 한 줄씩 쌓여 있고, 줄마다 Item Count와 지표 평균이 붙는다.
 
-| run 이름 | 무엇 |
-|---|---|
-| `ey-interview-36-rrf-k60-top5-20260916` | 기준선 |
-| `ey-interview-36-rrf-k60-top5-20260916-attachfix` | 첨부파일명 수정 후 |
+> **2026-09-16 이후 촬영할 때 주의.** 채점기를 RAGAS 표준 5종으로 전부 교체했다
+> (`faithfulness`, `answer_relevancy`, `context_precision`, `context_recall`,
+> `answer_correctness`). 이전 run들(`ey-interview-36-...`)은 삭제된 6종으로 채점된
+> 것이라 **같은 표에 올려도 비교가 안 된다.** 새 run은 이름이 `ragas5-`로 시작한다.
+> 아직 새 run이 없다면 이 화면은 캡처 대상이 아니다
+> ([EVALUATION.md](../EVALUATION.md) 5장).
 
 **② run 상세 — 36문항이 다 채점됐다는 근거**
 
-①의 표에서 run 이름을 클릭한다. 36개 문항이 한 줄씩 나오고 문항마다 6개 점수가 붙는다.
-`retrieval_hit` / `retrieval_mrr` 컬럼이 3문항 비어 있는 것이 정상이다
-(정답 `page_id`가 없는 `not_found` 문항 — [EVALUATION.md](../EVALUATION.md) 2.1절).
+①의 표에서 run 이름을 클릭한다. 36개 문항이 한 줄씩 나오고 문항마다 5개 점수가 붙는다.
+정답 라벨(`ground_truth_snippet`)이 36문항 전부 채워져 있어 **빈 칸이 없는 것이 정상이다.**
+빈 칸이 보이면 채점이 실패한 것이므로 콘솔 경고를 함께 확인한다
+([EVALUATION.md](../EVALUATION.md) 2.3절, 3.2절).
 
 **③ trace 하나 — 검색에서 생성까지 이어진 그림**
 
@@ -77,7 +79,7 @@ experiment-item-run
 │  ├─ rag.context_build
 │  └─ rag.generation
 └─ experiment-item-evaluation
-   └─ 채점기 6종 → 점수 6개
+   └─ RAGAS 지표 5종 → 점수 5개
 ```
 
 **"검색 → 컨텍스트 → 생성이 한 요청 안에서 이어진다"를 보여주는 화면이 이거다.**
@@ -110,9 +112,13 @@ Langfuse에는 그 비교 실행이 없다. **①의 화면을 결합 방식 비
 성공 사례도 낮은 점수를 검토하는 사례도 가능하다. **문항 하나가 전체 품질을 대표한다고
 설명하지 않는다.**
 
-수정 효과를 보여주려면 **#34**(`qa36-034`, "제휴병원 할인 혜택 안내문 파일로 받을 수 있어?")를
-두 run에서 나란히 연다. 같은 질문·같은 검색 결과인데 답변이 달라진다
-(`answer_correctness` 0.00 → 0.80). 근거는 [EVALUATION.md](../EVALUATION.md) 5.4절.
+**#34**(`qa36-034`, "제휴병원 할인 혜택 안내문 파일로 받을 수 있어?")가 열어 보기 좋은
+문항이다. 첨부파일명이 컨텍스트에 들어가느냐로 답변이 갈렸던 사례다.
+
+> 이 문항의 수정 전/후를 **점수로** 보여주던 근거(`answer_correctness` 0.00 → 0.80)는
+> 삭제된 자체 채점기의 값이라 더 이상 인용하지 않는다
+> ([EVALUATION.md](../EVALUATION.md) 0장·5.2절). 답변 텍스트 자체의 변화는 두 run의
+> 같은 문항을 열면 그대로 보이므로, 점수 대신 **답변을 나란히** 보여준다.
 
 ③의 소요 시간은 실행 과정의 근거다. **지연 화면만으로 답변 정확도나 검색 품질을
 입증한다고 말하지 않는다.** trace 캡처를 추가한다면 6장의 관측 설명이나 보조 자료에 둔다.
