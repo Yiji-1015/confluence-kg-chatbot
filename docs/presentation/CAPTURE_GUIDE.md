@@ -79,11 +79,20 @@ experiment-item-run
 │  ├─ rag.context_build
 │  └─ rag.generation
 └─ experiment-item-evaluation
-   └─ RAGAS 지표 5종 → 점수 5개
+   ├─ eval.faithfulness
+   ├─ eval.answer_relevancy
+   ├─ eval.context_precision
+   ├─ eval.context_recall
+   └─ eval.answer_correctness
 ```
 
 **"검색 → 컨텍스트 → 생성이 한 요청 안에서 이어진다"를 보여주는 화면이 이거다.**
 계측(`stage()`)이 실서비스와 같은 코드라서 실서비스 trace와 모양이 같다.
+
+아래 `eval.*` 다섯 줄은 채점 구간이다. **한 trace 안에 파이프라인과 채점이 같이 있다는
+것 자체가 근거다** — 점수가 어느 검색 결과·어느 답변에서 나왔는지 클릭으로 따라간다.
+이게 보이려면 채점 스레드로 trace 컨텍스트가 전파돼야 한다(`docs/EVALUATION.md` 2.3절).
+`eval.*`가 안 보이면 캡처하지 말고 그 절을 먼저 확인한다.
 
 > 이름이 **Langfuse**다. LangGraph는 전혀 다른 도구이므로 검색할 때 섞지 않는다.
 

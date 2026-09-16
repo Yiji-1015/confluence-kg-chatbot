@@ -32,6 +32,8 @@ ragas는 서빙에 필요 없어 별도 설치다:
 import asyncio
 import collections
 import concurrent.futures
+import contextlib
+import contextvars
 import os
 import sys
 from datetime import datetime
@@ -42,14 +44,9 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from app.config import settings
 
-if settings.LANGFUSE_PUBLIC_KEY:
-    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
-if settings.LANGFUSE_SECRET_KEY:
-    os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
-if settings.LANGFUSE_HOST:
-    os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_HOST
+# langfuse 환경변수 설정과 연결 확인은 이 모듈이 맡는다 (import 시점에 환경변수가 채워진다).
+from evaluation.langfuse_client import connect, get_client, load_dataset
 
-from langfuse import get_client
 from langfuse.experiment import Evaluation
 
 from app.llm.litellm_client import embed_texts, generate_answer
@@ -71,6 +68,19 @@ RAGAS_JUDGE_MAX_TOKENS = 4096
 # 동시 실행 수. 판정 모델을 짧은 시간에 몰아치면 429가 나고, 재시도에 실패한 문항이
 # 점수 없이 빠져 평균이 왜곡된다 (2026-09-02 실측: 45문항 중 5문항 누락).
 MAX_CONCURRENCY = int(os.environ.get("EVAL_MAX_CONCURRENCY", "4"))
+
+# RAGAS가 판정 모델을 부르는 호출까지 trace에 남길지. `langfuse.openai`를 import하면
+# OpenAI SDK가 전역으로 계측되어 판정 호출 하나하나가 generation으로 붙는다
+# (프롬프트·응답·토큰·비용까지 보인다).
+#
+# **기본값은 끔.** 이 계측은 `instructor`(RAGAS가 구조화 출력에 쓴다)가 같은 메서드를
+# 패치하는 자리와 겹친다. 두 패치가 함께 도는 것을 실제 엔드포인트로 확인하기 전까지
+# 기본으로 켜지 않는다. 채점이 깨지는 쪽이 trace가 덜 자세한 쪽보다 나쁘다.
+# 끈 상태에서도 판정 호출은 LiteLLM의 success_callback으로 Langfuse에 남는다.
+# 다만 실험 trace 아래가 아니라 별도 trace로 뜬다.
+#
+# 켜려면: docker exec -e EVAL_TRACE_JUDGE=1 rag-ai-server python -m evaluation.run_qa
+TRACE_JUDGE_CALLS = os.environ.get("EVAL_TRACE_JUDGE", "").strip().lower() in ("1", "true", "yes")
 
 # 이 실행에서 기록해야 하는 지표. 끝에 "지표별로 몇 건이 채점됐는지"를 대조하는 데 쓴다.
 # 순서와 이름 모두 RAGAS 인스턴스의 `.name`과 같다.
@@ -176,7 +186,11 @@ def _ragas_metrics():
         return _RAGAS
     _RAGAS["loaded"] = True
     try:
-        from openai import AsyncOpenAI
+        if TRACE_JUDGE_CALLS:
+            # import 자체가 OpenAI SDK를 전역 계측한다. 클래스는 openai.AsyncOpenAI 그대로다.
+            from langfuse.openai import AsyncOpenAI
+        else:
+            from openai import AsyncOpenAI
         from ragas.embeddings import OpenAIEmbeddings
         from ragas.llms import llm_factory
         from ragas.metrics.collections import (
@@ -204,16 +218,64 @@ def _ragas_metrics():
 
         print(f"[RAGAS] 지표 {len(METRIC_NAMES)}종 활성화 "
               f"(판정 {settings.JUDGE_MODEL} / 임베딩 {settings.DEFAULT_EMBEDDING_MODEL})")
+        if TRACE_JUDGE_CALLS:
+            print("[RAGAS] 판정 호출 계측 켜짐 (EVAL_TRACE_JUDGE) — "
+                  "판정 프롬프트·응답이 trace에 남는다")
     except Exception as exc:
         _RAGAS["error"] = f"{type(exc).__name__}: {exc}"
         print(f"[RAGAS] 초기화 실패 - {_RAGAS['error']}")
     return _RAGAS
 
 
+@contextlib.contextmanager
+def _eval_span(name: str, fields):
+    """
+    채점 한 건을 Langfuse span으로 감싼다. Langfuse가 없거나 span 생성이 실패해도
+    **채점은 그대로 진행한다.** 관측이 평가를 막으면 안 된다.
+
+    입력 전문은 남기지 않는다. 컨텍스트가 문서 여러 건이라 trace가 본문으로 뒤덮이고,
+    같은 내용이 이미 `rag.context_build`에 있다. 길이와 건수만 남겨 어느 문항이
+    무거웠는지 가늠할 수 있게 한다.
+    """
+    contexts = fields.get("retrieved_contexts") or []
+    metadata = {
+        "metric": name,
+        "retrieved_contexts": len(contexts),
+        "context_chars": sum(len(c) for c in contexts),
+        "response_chars": len(fields.get("response") or ""),
+        "reference_chars": len(fields.get("reference") or ""),
+    }
+    span_cm = None
+    span = None
+    try:
+        # as_type="evaluator" — Langfuse가 채점 구간으로 알아본다. 기본값 "span"으로 두면
+        # rag.search 같은 파이프라인 단계와 같은 모양이라 trace에서 구분되지 않는다.
+        span_cm = get_client().start_as_current_observation(
+            name=f"eval.{name}", as_type="evaluator")
+        span = span_cm.__enter__()
+    except Exception:
+        span_cm = None
+
+    try:
+        yield span
+    finally:
+        if span_cm is not None:
+            try:
+                span.update(metadata=metadata)
+                span_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+
+
 def _ascore(name: str, **fields):
     """
     RAGAS 지표 하나를 채점해 0~1 값을 돌려준다. 실패 시 None (해당 문항만 건너뜀).
     `fields`는 각 지표의 `ascore()` 시그니처에 그대로 실린다.
+
+    채점 구간을 `eval.<지표>` span으로 감싸 Langfuse trace에 남긴다. 그래야 실험 item
+    하나를 열었을 때 검색·생성 아래에 채점 5건이 이어 붙고, **어느 지표가 몇 초를 썼는지,
+    어디서 실패했는지**가 한 trace에서 읽힌다. 점수만 남기면 값은 보이지만 그 값이
+    어떻게 나왔는지는 안 보인다.
     """
     metric = _ragas_metrics().get(name)
     if metric is None:
@@ -222,7 +284,8 @@ def _ascore(name: str, **fields):
         return None
 
     def call():
-        return asyncio.run(metric.ascore(**fields))
+        with _eval_span(name, fields):
+            return asyncio.run(metric.ascore(**fields))
 
     try:
         # Langfuse는 평가기를 이벤트 루프 안에서 실행하므로 asyncio.run()이 거부된다.
@@ -232,8 +295,16 @@ def _ascore(name: str, **fields):
         except RuntimeError:
             result = call()
         else:
+            # `pool.submit(call)`로 그냥 넘기면 새 스레드는 현재 컨텍스트를 물려받지
+            # 못한다. Langfuse(OpenTelemetry)의 "지금 열려 있는 span"은 contextvar에
+            # 들어 있어서, 전파하지 않으면 eval span이 실험 item 아래가 아니라
+            # **부모 없는 별도 trace로 떨어진다.** 점수는 정상 기록되므로 UI를 열어
+            # 보기 전까지 알아채지 못한다.
+            # copy_context()로 떠서 스레드 안에서 그 컨텍스트로 실행한다
+            # (실측 확인: 전파 없음 -> 부모 없음 / 전파 -> experiment-item 아래).
+            ctx = contextvars.copy_context()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(call).result()
+                result = pool.submit(ctx.run, call).result()
         return float(result.value)
     except Exception as exc:
         _FAILURES[f"{name}: {type(exc).__name__}"] += 1
@@ -451,6 +522,7 @@ def _preflight(dataset):
     실행은 정상 종료되고, 나중에 Langfuse UI를 열어야 누락을 알게 된다.
     """
     print("=== 실행 전 확인 ===")
+    print(f"Langfuse       : 연결됨 ({settings.LANGFUSE_HOST})")
     print(f"데이터셋       : {DATASET_NAME} ({len(dataset.items)}건)")
     print(f"실행(run) 이름 : {_run_name()}")
     print(f"검색 설정      : RRF_K={settings.RRF_K} top_k={settings.RETRIEVAL_TOP_K} "
@@ -483,8 +555,10 @@ def _preflight(dataset):
 
 
 def main():
-    client = get_client()
-    dataset = client.get_dataset(DATASET_NAME)
+    # 순서가 중요하다. 연결 -> 데이터셋 -> RAGAS 순으로 확인해야 실패 메시지가
+    # 실제 원인을 가리킨다. 연결이 안 된 채로 데이터셋을 읽으면 "데이터셋 없음"처럼 보인다.
+    client = connect()
+    dataset = load_dataset(client, DATASET_NAME)
     expected_counts = _preflight(dataset)
 
     run_name = _run_name()

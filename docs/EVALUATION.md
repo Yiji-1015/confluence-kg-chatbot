@@ -1,7 +1,8 @@
 # 평가 계층 기준
 
 > 대상: `ai-server/evaluation/` — `run_qa.py`(실행·채점),
-> `dataset_items_36.py`(평가셋 → Langfuse item 변환), `push_dataset_36.py`(업로드).
+> `dataset_items_36.py`(평가셋 → Langfuse item 변환), `push_dataset_36.py`(업로드),
+> `langfuse_client.py`(연결), `verify_langfuse.py`(연결 확인).
 >
 > 검색 방식 비교(BM25 / kNN / min-max / RRF)는 저장소 루트의 `retrieval_fusion_comparison.py`와
 > `EVAL_RESULTS_20260916.md`가 담당한다. 이 문서는 **Langfuse Experiment 경로**를 다룬다.
@@ -135,6 +136,10 @@ client.flush()
 ```bash
 # 평가 의존성. 이미지에 없으므로 컨테이너를 새로 만들 때마다 필요하다.
 docker exec rag-ai-server pip install -r /app/requirements-eval.txt
+
+# 연결만 먼저 확인한다 (1.4절). 36문항을 태우기 전에 10초면 끝난다.
+docker exec rag-ai-server python -m evaluation.verify_langfuse
+
 docker exec rag-ai-server python -m evaluation.push_dataset_36
 docker exec -e EVAL_RUN_NAME=<이름> rag-ai-server python -m evaluation.run_qa
 ```
@@ -212,6 +217,63 @@ Langfuse 목록에서는 이름만 보인다. 이름이 다르면 실수로 같�
 **`run_experiment(name=...)`만 주면 안 된다.** langfuse 4.x는 `run_name`을 생략하면
 `name` 뒤에 ISO 타임스탬프를 붙여 실제 run 이름을 만든다. 그러면 지정한 이름과 Langfuse UI에
 보이는 이름이 달라진다. `name`과 `run_name`에 같은 값을 넘겨 고정한다.
+
+## 1.4 Langfuse 연결 — `langfuse_client.py`
+
+평가 스크립트 셋이 전부 이 모듈을 거쳐 클라이언트를 얻는다.
+
+```python
+from evaluation.langfuse_client import connect
+client = connect()          # 환경변수 적용 + auth_check + 실패 시 SystemExit
+```
+
+**왜 모듈로 뺐나.** 연결 확인을 `run_qa`에 두면 문항만 올리는 `push_dataset_36`이
+`run_qa`를 import하게 되고, 그러면 Elasticsearch 클라이언트와 LLM 모듈까지 딸려 온다.
+문항을 업로드하는 데 검색 엔진이 필요할 이유가 없다. 이 모듈은 `app.config`와 `langfuse`
+두 개만 본다. 키를 환경변수로 옮기는 여섯 줄도 세 스크립트에 복사돼 있던 것을 여기로 모았다.
+
+### 확인 순서
+
+`main()`은 **연결 → 데이터셋 → RAGAS** 순으로 확인한다. 순서가 곧 메시지의 정확도다.
+연결이 안 된 채로 데이터셋을 읽으면 "데이터셋 없음"처럼 보이고, 실제 원인인 키·지역
+문제를 엉뚱한 데서 찾게 된다.
+
+| 단계 | 잡는 것 |
+|---|---|
+| `settings_problem()` | 키가 비었거나 `pk-lf-` / `sk-lf-` 접두사가 아닌 경우 (호출 전에 잡힌다) |
+| `client.auth_check()` | 연결은 되는데 키가 거부되는 경우 — **대부분 지역(region) 불일치다** |
+| `load_dataset()` | 데이터셋 미업로드 |
+| `_preflight()` | RAGAS 미설치, 지표 5종 중 누락 |
+
+### 지역이 제일 흔한 원인이다
+
+Langfuse 키는 **프로젝트가 있는 지역에서만** 통한다. 지역이 틀리면 키가 맞아도 401이 나고,
+증상은 그냥 "인증 실패"라 키를 의심하며 헤매게 된다. `config.py`의 기본값은 EU
+(`https://cloud.langfuse.com`)인데 이 프로젝트의 캡처 경로는 **jp**다
+(`docs/presentation/CAPTURE_GUIDE.md`). `.env`에 `LANGFUSE_HOST`를 안 적으면 조용히
+EU로 붙는다. 그래서 실패 메시지에 지역 목록을 항상 함께 찍는다.
+
+### `verify_langfuse.py` — 36문항을 태우기 전에
+
+`run_qa`는 36문항 × 지표 5종이라 판정 모델 호출이 수백 건이다. 연결이나 키가 틀렸을 때
+그걸로 알아내면 시간과 비용을 버린다. 같은 경로를 **최소 호출로** 밟는 스크립트를 따로 뒀다.
+
+```
+[1/6] Langfuse 설정       키 존재·형식
+[2/6] Langfuse 인증       auth_check()
+[3/6] Langfuse 쓰기       trace 1건을 실제로 남기고 UI 주소를 찍는다
+[4/6] 데이터셋            업로드 여부와 문항 수
+[5/6] LiteLLM 게이트웨이  판정 모델 1회 + 임베딩 1회
+[6/6] RAGAS              지표 5종 생성 (채점은 하지 않는다)
+```
+
+3번이 따로 있는 이유는 **인증이 됐다고 쓰기가 되는 것은 아니기** 때문이다. Langfuse는
+이벤트를 비동기로 보내므로 `flush()`까지 해야 실제로 서버에 닿았는지 알 수 있다.
+같은 이유로 `push_dataset_36`도 업서트 전에 `connect()`를 부른다. 키가 틀려도
+`create_dataset_item()`은 그 자리에서 실패하지 않아서, 36줄의 `upserted ...`가 다 찍히고
+맨 끝 개수 대조에서야 어긋난다.
+
+5번은 실제 API를 부른다(아주 작은 비용). 건너뛰려면 `VERIFY_SKIP_LLM=1`.
 
 ---
 
@@ -301,7 +363,7 @@ answer_correctness ascore(user_input, response, reference)
 `context_precision`과 `context_recall`은 **받는 인자가 같은데 순서가 다르다.**
 위치 인자로 넘기면 `reference`와 `retrieved_contexts`가 뒤바뀌어도 타입이 맞아 조용히 통과한다.
 
-### 이벤트 루프 처리
+### 이벤트 루프 처리와 trace 전파
 
 RAGAS 지표는 `async` API(`metric.ascore()`)만 제공하는데, Langfuse는 채점기를 이미 돌고 있는
 이벤트 루프 안에서 호출한다. 그 안에서 `asyncio.run()`을 부르면 거부된다.
@@ -312,9 +374,73 @@ try:
 except RuntimeError:
     result = call()                      # 루프 없음 -> 그냥 실행
 else:
+    ctx = contextvars.copy_context()     # <- 이 줄이 핵심이다
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        result = pool.submit(call).result()   # 루프 있음 -> 별도 스레드에서 새 루프
+        result = pool.submit(ctx.run, call).result()
 ```
+
+**`copy_context()` 없이 `pool.submit(call)`로 넘기면 채점이 trace에서 사라진다.**
+Langfuse 4.x는 OpenTelemetry 위에 있고, "지금 열려 있는 span"은 contextvar에 들어 있다.
+새 스레드는 그걸 물려받지 않으므로 채점 구간이 실험 item 아래가 아니라 **부모 없는 별도
+trace로 떨어진다.** 점수는 정상 기록되므로 **UI를 열어 보기 전까지 알아채지 못한다.**
+
+실측으로 확인한 차이 (stub Langfuse 서버 + 실제 langfuse 클라이언트):
+
+| | 채점 중 `get_current_trace_id()` |
+|---|---|
+| 전파 없음 | `None` — "No active span in current context" |
+| `copy_context()` 전파 | 실험 item의 trace id와 **동일** |
+
+### 채점 구간도 span으로 남긴다
+
+```python
+span_cm = get_client().start_as_current_observation(
+    name=f"eval.{name}", as_type="evaluator")
+```
+
+`as_type="evaluator"`를 준다. 기본값 `"span"`으로 두면 `rag.search` 같은 파이프라인 단계와
+같은 모양이라 trace에서 구분되지 않는다.
+
+그래서 실험 item 하나를 열면 이렇게 펼쳐진다.
+
+```
+experiment-item-run
+├─ experiment-item-task
+│  ├─ rag.embedding
+│  ├─ rag.search
+│  ├─ rag.context_build
+│  └─ rag.generation
+└─ experiment-item-evaluation
+   ├─ eval.faithfulness
+   ├─ eval.answer_relevancy
+   ├─ eval.context_precision
+   ├─ eval.context_recall
+   └─ eval.answer_correctness
+```
+
+점수만 남기면 값은 보이지만 **그 값이 어떻게 나왔는지는 안 보인다.** 어느 지표가 몇 초를
+썼는지, 어디서 실패했는지가 이 span들로 읽힌다.
+
+메타데이터에는 길이와 건수만 남긴다(컨텍스트 문서 수, 글자 수). 입력 전문을 넣으면 trace가
+본문으로 뒤덮이고, 같은 내용이 이미 `rag.context_build`에 있다.
+
+### 판정 호출까지 남기려면 — `EVAL_TRACE_JUDGE`
+
+위의 span은 "채점에 몇 초 걸렸나"까지다. **RAGAS가 판정 모델에 무엇을 보내고 무엇을
+받았는지**는 안 보인다. `EVAL_TRACE_JUDGE=1`을 주면 `langfuse.openai`를 import해서 OpenAI
+SDK를 전역 계측하고, 판정 호출 하나하나가 generation으로 붙는다(프롬프트·응답·토큰·비용).
+
+```bash
+docker exec -e EVAL_TRACE_JUDGE=1 rag-ai-server python -m evaluation.run_qa
+```
+
+**기본값은 꺼짐이다.** 이 계측은 `instructor`(RAGAS가 구조화 출력에 쓴다)가 같은 메서드를
+패치하는 자리와 겹친다. 지표 5종 생성까지는 확인했지만 **실제 판정 호출로는 확인하지
+못했다**(그러려면 살아 있는 LiteLLM과 Upstage 키가 필요하다). 채점이 깨지는 쪽이 trace가
+덜 자세한 쪽보다 나쁘므로, 확인 전까지 기본으로 켜지 않는다.
+
+끈 상태에서도 판정 호출은 LiteLLM의 `success_callback: ["langfuse"]`로 Langfuse에 남는다.
+다만 실험 trace 아래가 아니라 별도 trace로 뜬다.
 
 ### 결측 입력
 
