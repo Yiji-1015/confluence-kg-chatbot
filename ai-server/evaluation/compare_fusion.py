@@ -13,7 +13,8 @@
 
 문항 집합:
 - v2 원본 (`dataset_items`): 질문의 84.7%가 문서 제목 단어를 포함한다
-- v4 paraphrase (`paraphrase_dataset_items`): 같은 정답 문서, 제목 단어 누출 6.4%
+  (v4 paraphrase 대조군은 2026-09-16에 제거했다. LLM이 LLM 질문을 재작성한 것이라
+   "실제 사용자 질문의 표본"으로 제시하기 어렵다고 판단했다.)
 
 실행:
     docker exec -i rag-ai-server python -m evaluation.compare_fusion
@@ -27,7 +28,6 @@ from app.retrieval.es_client import (
 )
 from app.llm.litellm_client import embed_texts
 from evaluation.dataset_items import QA_DATASET_ITEMS
-from evaluation.paraphrase_dataset_items import PARAPHRASE_QA_ITEMS
 
 TOP_K = settings.RETRIEVAL_TOP_K
 CANDIDATE_SIZE = settings.RETRIEVAL_CANDIDATE_SIZE
@@ -196,4 +196,3 @@ def evaluate(items, label):
 
 if __name__ == "__main__":
     evaluate(QA_DATASET_ITEMS, "v2 원본 — 제목 단어 84.7% 포함")
-    evaluate(PARAPHRASE_QA_ITEMS, "v4 paraphrase — 제목 단어 6.4%")
