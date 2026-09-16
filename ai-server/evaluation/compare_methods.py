@@ -38,6 +38,7 @@ import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -63,7 +64,46 @@ TOP_K = settings.RETRIEVAL_TOP_K
 LIMIT = int(os.environ.get("COMPARE_LIMIT", "0"))
 MAX_CONCURRENCY = int(os.environ.get("EVAL_MAX_CONCURRENCY", "4"))
 
-OUT_STEM = os.environ.get("COMPARE_OUT", "compare_methods_ragas")
+OUT_NAME = os.environ.get("COMPARE_OUT", "compare_methods_ragas")
+
+# 산출물이 나갈 자리. 컨테이너의 /app는 컨테이너 레이어라 쓰기는 되지만 **재생성하면
+# 사라진다.** 판정 모델을 수백 번 부른 결과를 그렇게 잃으면 안 되므로, compose가
+# 호스트로 rw 마운트해 둔 /app/eval-results를 우선 쓴다.
+# (/app/evaluation은 :ro 마운트라 거기에는 못 쓴다.)
+_MOUNTED_OUT = Path("/app/eval-results")
+
+
+def resolve_out_dir() -> Path:
+    override = os.environ.get("COMPARE_OUT_DIR", "").strip()
+    if override:
+        return Path(override)
+    if _MOUNTED_OUT.is_dir():
+        return _MOUNTED_OUT
+    return Path.cwd()
+
+
+def check_writable(out_dir: Path) -> None:
+    """
+    **비싼 작업을 시작하기 전에** 쓸 수 있는지 확인한다.
+
+    끝에서야 알면 판정 모델 수백 번을 이미 쓴 뒤다. 그 실패가 제일 아프다.
+    """
+    probe = out_dir / ".write_probe"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except Exception as exc:
+        raise SystemExit(
+            "\n산출물을 쓸 수 없어 시작하지 않습니다 (채점을 돌리기 전에 멈춥니다).\n"
+            f"  경로: {out_dir}\n"
+            f"  원인: {type(exc).__name__}: {exc}\n\n"
+            "  컨테이너 안에서 돌린다면 docker-compose.app.yml에 이 마운트가 있어야 합니다:\n"
+            "      - ./eval-results:/app/eval-results\n"
+            "  추가한 뒤 컨테이너를 다시 만드세요:\n"
+            "      docker compose -f docker-compose.yml -f docker-compose.app.yml up -d ai-server\n\n"
+            "  다른 곳에 쓰려면: -e COMPARE_OUT_DIR=/tmp"
+        )
 
 
 def _rank(doc_ids, gold):
@@ -245,17 +285,20 @@ def head_to_head(tasks, gold_ids, baseline="rrf"):
     return results
 
 
-def save(tasks, summary, h2h):
+def save(tasks, summary, h2h, out_dir: Path):
     per_question = [{k: v for k, v in t.items() if k != "contexts"} for t in tasks]
     for row in per_question:
         row["top_doc_ids"] = " / ".join(row["top_doc_ids"])
 
-    with open(f"{OUT_STEM}.csv", "w", newline="", encoding="utf-8") as f:
+    csv_path = out_dir / f"{OUT_NAME}.csv"
+    json_path = out_dir / f"{OUT_NAME}.json"
+
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(per_question[0].keys()))
         writer.writeheader()
         writer.writerows(per_question)
 
-    with open(f"{OUT_STEM}.json", "w", encoding="utf-8") as f:
+    with json_path.open("w", encoding="utf-8") as f:
         json.dump({
             "measured_at": datetime.now().isoformat(timespec="seconds"),
             "conditions": {
@@ -275,7 +318,12 @@ def save(tasks, summary, h2h):
         }, f, ensure_ascii=False, indent=2)
         f.write("\n")
 
-    print(f"\n저장: {OUT_STEM}.csv / {OUT_STEM}.json")
+    print(f"\n저장: {csv_path}")
+    print(f"      {json_path}")
+    if out_dir == _MOUNTED_OUT:
+        print("      (호스트의 eval-results/ 에 그대로 남습니다)")
+    else:
+        print("      ※ 컨테이너 안이라면 재생성 시 사라집니다. docker cp로 꺼내두세요.")
 
 
 def main():
@@ -284,8 +332,12 @@ def main():
         rows = rows[:LIMIT]
         print(f"※ COMPARE_LIMIT={LIMIT} — 앞 {LIMIT}문항만 돌립니다 (확인용)\n")
 
+    out_dir = resolve_out_dir()
+    check_writable(out_dir)
+
     print("=== 측정 조건 ===")
     print(f"인덱스   : {settings.ELASTICSEARCH_INDEX}")
+    print(f"산출물   : {out_dir}")
     print(f"검색     : top_k={TOP_K} 후보={settings.RETRIEVAL_CANDIDATE_SIZE} "
           f"RRF_K={settings.RRF_K} 최신성={settings.RECENCY_BOOST_MAX:g}(rrf_recency에만)")
     print(f"판정     : {settings.JUDGE_MODEL}")
@@ -307,7 +359,7 @@ def main():
     score_all(tasks)
     summary, gold_ids = summarize(tasks, rows)
     h2h = head_to_head(tasks, gold_ids)
-    save(tasks, summary, h2h)
+    save(tasks, summary, h2h, out_dir)
 
     if _FAILURES:
         print("\n" + "!" * 60)

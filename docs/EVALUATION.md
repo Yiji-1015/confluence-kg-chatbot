@@ -777,8 +777,15 @@ docker exec -e COMPARE_LIMIT=3 rag-ai-server python -m evaluation.compare_method
 docker exec rag-ai-server python -m evaluation.compare_methods
 ```
 
-산출물: `compare_methods_ragas.csv` / `.json` (문항×방식 단위 원자료 + 요약 + 승패).
-콘솔에는 비교 표, 채점 건수, 승패, 실패 사유가 찍힌다.
+산출물: `eval-results/compare_methods_ragas.csv` / `.json`
+(문항×방식 단위 원자료 + 요약 + 승패). 콘솔에는 비교 표, 채점 건수, 승패, 실패 사유가 찍힌다.
+
+**산출물 자리를 따로 만든 이유.** 컨테이너의 다른 마운트는 전부 `:ro`이고, `/app`는
+컨테이너 레이어라 쓰기는 되지만 **재생성하면 사라진다.** 판정 모델을 수백 번 부른 결과를
+그렇게 잃으면 안 되므로 `./eval-results`를 rw로 하나만 열어 호스트에 남긴다.
+
+**쓸 수 있는지는 시작 전에 확인한다**(`check_writable()`). 끝에서야 알면 판정 호출을 이미
+다 쓴 뒤다. 그 실패가 제일 아프다. 다른 곳에 쓰려면 `-e COMPARE_OUT_DIR=/tmp`.
 
 **이 스크립트는 Langfuse Experiment가 아니다.** 부모 trace가 없으니 채점 span을 만들지
 않는다(`disable_eval_spans()`). Langfuse가 설정 안 된 환경에서 호출마다 인증 에러가
