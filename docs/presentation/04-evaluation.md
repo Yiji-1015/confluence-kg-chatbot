@@ -2,6 +2,13 @@
 
 [전체 목차](README.md) · 이전: [색인 관리](03-ingestion.md) · 다음: [AI 서비스화](05-ai-serving.md)
 
+> **⚠️ 이 문서는 2026-09-16 이전 상태를 설명한다.** 그 뒤로 평가 계층이 두 번 바뀌었다.
+> 평가셋이 45문항에서 36문항으로 줄면서 여기 링크된 스크립트 몇 개가 삭제됐고,
+> 채점기 6종(`retrieval_hit`, `retrieval_mrr`, `answer_faithfulness`, `answer_correctness`,
+> `ragas_faithfulness`, `ragas_context_precision`)이 **RAGAS 표준 5종으로 전부 교체됐다.**
+> 아래의 지표 이름과 점수는 전부 옛 구성의 것이다.
+> 현재 기준은 [EVALUATION.md](../EVALUATION.md)가 유일하다.
+
 ## 1. 코드와 근거
 
 | 파일 | 역할 |

@@ -4,6 +4,145 @@
 
 ## 2026-09-16
 
+### 평가의 Langfuse 연결을 손봤다 — 채점이 trace에서 사라지고 있었다
+
+채점기를 5종으로 바꾸면서 연결 쪽을 들여다보다 찾았다. **교체 전에도 있던 문제다.**
+
+RAGAS 지표는 async API만 제공하는데 Langfuse는 채점기를 이미 돌고 있는 이벤트 루프
+안에서 부른다. 그래서 별도 스레드를 열어 `asyncio.run()`을 돌리고 있었다.
+
+```python
+with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    result = pool.submit(call).result()
+```
+
+Langfuse 4.x는 OpenTelemetry 위에 있고 "지금 열려 있는 span"은 contextvar에 들어 있다.
+새 스레드는 그걸 물려받지 않는다. 그래서 **채점 구간이 실험 item 아래가 아니라 부모 없는
+별도 trace로 떨어졌다.** 점수는 정상 기록되므로 UI를 열어 보기 전까지 알 수 없다.
+
+`contextvars.copy_context()`로 떠서 스레드 안에서 그 컨텍스트로 실행하게 고쳤다.
+
+| | 채점 중 `get_current_trace_id()` |
+|---|---|
+| 전과 같이 전파 없음 | `None` — "No active span in current context" |
+| `copy_context()` 전파 | 실험 item의 trace id와 동일 |
+
+(stub Langfuse 서버에 실제 langfuse 클라이언트를 물려 확인했다.)
+
+**채점 구간을 span으로 남긴다.** `eval.<지표>`, `as_type="evaluator"`. 기본값 `"span"`으로
+두면 `rag.search` 같은 파이프라인 단계와 같은 모양이라 trace에서 구분되지 않는다.
+이제 실험 item 하나에 `rag.*` 4단계와 `eval.*` 5종이 한 줄로 이어진다. 점수만 남기면
+값은 보이지만 그 값이 어떻게 나왔는지는 안 보인다.
+
+메타데이터에는 길이와 건수만 넣는다. 입력 전문을 넣으면 trace가 본문으로 뒤덮이고,
+같은 내용이 이미 `rag.context_build`에 있다.
+
+**판정 호출 계측은 플래그로 뒀다** (`EVAL_TRACE_JUDGE=1`, 기본 꺼짐). `langfuse.openai`를
+import하면 판정 프롬프트·응답·토큰·비용까지 generation으로 붙는데, 이 계측이
+`instructor`(RAGAS가 구조화 출력에 쓴다)의 패치 자리와 겹친다. 지표 5종 생성까지는
+확인했지만 실제 판정 호출로는 확인하지 못했다. 채점이 깨지는 쪽이 trace가 덜 자세한
+쪽보다 나쁘다.
+
+### 연결 실패를 실행 전에 잡는다
+
+없던 것을 넣었다. 예전에는 `get_client()` 다음 바로 `get_dataset()`이라, 키가 틀리면
+"데이터셋을 못 읽었다"처럼 보였다.
+
+- `evaluation/langfuse_client.py` 신설. 환경변수 적용과 연결 확인을 한 곳에 모았다.
+  세 스크립트에 복사돼 있던 여섯 줄을 지웠다. **`run_qa`에 두지 않은 이유**는 문항만
+  올리는 `push_dataset_36`이 `run_qa`를 import하면 Elasticsearch와 LLM 모듈까지 딸려
+  오기 때문이다. 이 모듈은 `app.config`와 `langfuse` 둘만 본다.
+- 확인 순서를 **연결 -> 데이터셋 -> RAGAS**로 고정했다. 순서가 곧 메시지의 정확도다.
+- 실패 메시지에 **지역(region) 목록을 항상 함께** 찍는다. Langfuse 키는 프로젝트가 있는
+  지역에서만 통하는데 증상은 그냥 401이라 키를 의심하며 헤매게 된다. `config.py` 기본값은
+  EU인데 이 프로젝트의 캡처 경로는 jp다. `.env`에 `LANGFUSE_HOST`를 안 적으면 조용히
+  EU로 붙는다.
+- 응답 검증 오류를 400자에서 자른다(`brief()`). 36문항이면 아이템마다 한 덩어리씩 붙어
+  수십 줄이 쏟아지고, 정작 그 아래 해결 방법이 화면 밖으로 밀린다.
+- `push_dataset_36`도 업서트 전에 연결을 확인한다. Langfuse는 이벤트를 비동기로 보내므로
+  키가 틀려도 `create_dataset_item()`은 그 자리에서 실패하지 않는다. 36줄의
+  `upserted ...`가 다 찍히고 맨 끝 개수 대조에서야 어긋났다.
+
+**`evaluation/verify_langfuse.py` 신설.** `run_qa`는 36문항 x 지표 5종이라 판정 모델
+호출이 수백 건이다. 연결이 틀렸을 때 그걸로 알아내면 시간과 비용을 버린다. 같은 경로를
+최소 호출로 밟는다: 설정 -> 인증 -> **쓰기(trace 1건 + flush)** -> 데이터셋 ->
+LiteLLM 판정·임베딩 각 1회 -> RAGAS 5종 생성. 쓰기를 따로 보는 이유는 인증이 됐다고
+쓰기가 되는 것은 아니기 때문이다.
+
+stub Langfuse 서버를 띄워 6단계 전부와 실패 경로(키 없음/형식 오류/연결 거부/데이터셋
+없음)를 확인했다.
+
+### 평가 채점기를 RAGAS 표준 5종으로 전부 교체했다
+
+`run_qa.py`의 채점기 6종을 지우고 `ragas.metrics.collections`의 5종으로 갈았다.
+
+| 지웠다 | 무엇이었나 |
+|---|---|
+| `answer_faithfulness` | **자체.** 판정 모델에게 "SCORE: 숫자"를 요구한 프롬프트 한 방 |
+| `answer_correctness` | **자체.** 같은 방식 |
+| `retrieval_hit` | 자체. `any()` 비교 |
+| `retrieval_mrr` | 자체. `1/rank` |
+| `ragas_faithfulness` | RAGAS `Faithfulness` — 계산은 유지, 이름만 `faithfulness`로 |
+| `ragas_context_precision` | RAGAS이지만 **reference를 안 보는** `ContextPrecisionWithoutReference` |
+
+| 넣었다 | 클래스 |
+|---|---|
+| `faithfulness` | `Faithfulness` |
+| `answer_relevancy` | `AnswerRelevancy` |
+| `context_precision` | `ContextPrecision` (= `ContextPrecisionWithReference`) |
+| `context_recall` | `ContextRecall` |
+| `answer_correctness` | `AnswerCorrectness` |
+
+**문제는 자체 지표 두 개였다.** 구현이 이랬다.
+
+```python
+judge_prompt = ("... 0.0 ~ 1.0 사이 점수를 아래 형식으로만 출력하세요:\n"
+                "SCORE: <숫자>\nREASON: <한 줄 이유>")
+score = float(_SCORE_RE.search(raw).group(1))
+score = max(0.0, min(1.0, score))
+```
+
+0.2와 0.4를 가르는 기준이 없다. 답변을 주장 단위로 쪼개지도, 컨텍스트와 대조하지도, 정답과
+사실 단위로 맞춰보지도 않는다. 모델이 부른 숫자를 정규식으로 긁어 0~1로 자른 값이다.
+
+**못 알아챈 이유는 이름이다.** RAGAS에 `faithfulness`와 `answer_correctness`가 실제로
+있는데 자체 구현에 거의 같은 이름을 붙였다. 대시보드에서 `answer_correctness 0.839`를 보면
+표준 지표로 읽힌다. 문서도 여섯을 한 표에 놓고 `(자체)` / `(표준)` 각주로만 갈랐고,
+자체 지표를 표준과 **"교차 검증"한다**고 써서 둘을 대등하게 보이게 했다.
+
+결정적으로 **인용하던 대표 숫자가 자체 지표 쪽이었다.** 첨부파일명 수정의 효과로 보고한
+`answer_correctness 0.800 → 0.839`가 그 값이다. 근거로 삼기에 부족하다.
+
+`ragas_context_precision`은 RAGAS 구현이 맞지만 정답 라벨을 안 보는 변형이었다.
+답변이 틀려도 그 틀린 답변에 들어맞는 문서를 가져오면 점수가 오른다. 36문항 전부
+`ground_truth_snippet`이 있는데도 쓰지 않고 있었다.
+
+**재발 방지는 규칙으로 뒀다.** 점수를 만드는 코드를 이 저장소에 두지 않는다. `run_qa.py`에는
+프롬프트도 파싱도 가중치도 없고, 하는 일은 파이프라인 출력을 RAGAS 입력 필드에 맞춰 넘기는
+것뿐이다. 지표 생성자에 `llm`과 `embeddings` 말고 아무것도 넘기지 않는다
+(`strictness`, `weights` 0.75/0.25, `beta` 전부 라이브러리 기본값). Langfuse에 남는 점수
+이름도 RAGAS 인스턴스의 `.name`을 그대로 쓴다.
+
+**딸려온 변경**
+
+- `answer_relevancy`와 `answer_correctness`가 임베딩을 요구한다. 색인에 쓴 것과 같은
+  모델(`embedding-openai`)을 LiteLLM 게이트웨이를 통해 넘긴다. 게이트웨이를 거쳐야
+  재시도·폴백과 Langfuse 콜백이 그대로 걸린다.
+- `context_precision`과 `context_recall`은 받는 인자가 같은데 **순서가 다르다.**
+  위치 인자로 넘기면 `reference`와 `retrieved_contexts`가 뒤바뀌어도 타입이 맞아 조용히
+  통과하므로 전부 키워드로 넘긴다.
+- `_print_diagnosis()`의 첫 갈래를 `retrieval_hit == 0`에서 `context_recall < 0.5`로 바꿨다.
+  문서를 찾았어도 필요한 대목이 컨텍스트에 안 실렸으면 검색 실패로 잡힌다. 아래 첨부파일명
+  누락이 정확히 그 경우였고 옛 분기는 "이해·추론 실패"로 잘못 분류했다.
+- run 이름 접두사를 `qa-`에서 `ragas5-`로 바꿨다. Langfuse 목록에서 옛 run과 섞이지 않게 한다.
+- `_preflight()`가 5종이 다 만들어졌는지 확인하고 하나라도 없으면 시작하지 않는다.
+  이제 채점기가 전부 RAGAS라 없으면 기록할 점수가 하나도 없다.
+
+**측정값은 아직 없다.** 지표를 바꿨으니 이전 수치는 이어지지 않는다
+(`ragas_faithfulness` → `faithfulness` 하나만 계산이 같다). `EVALUATION.md` 5장을
+비워 두고 재측정 후 채운다. 이전 값들은 이 문서에 이력으로 남긴다.
+
+
 ### 첨부파일 색인 범위를 문서 형식 전반으로 넓히고 가중치를 1.0으로 내렸다
 
 pdf/excel에 더해 `pptx` `ppt` `docx` `doc` `hwp` `hwpx`를 색인 대상에 넣었다.

@@ -58,6 +58,10 @@ services:
       # 확정된 36문항 평가셋(저장소 루트의 git 추적본). 평가가 원본을 그대로 읽게 해서
       # 컨테이너 안에 사본을 두지 않는다. 사본을 두면 질문/정답 라벨이 갈라져도 모른다.
       - ./confluence_retrieval_eval_36_indexed.json:/app/confluence_retrieval_eval_36_indexed.json:ro
+      # 평가 산출물이 나갈 자리. 위의 마운트가 전부 :ro 이고 /app는 컨테이너 레이어라
+      # 재생성하면 사라진다. 판정 모델을 수백 번 부른 결과를 그렇게 잃지 않도록
+      # 여기 하나만 rw로 열어 호스트에 남긴다.
+      - ./eval-results:/app/eval-results
       - ./elasticsearch/certs:/app/elasticsearch/certs:ro
       - ./.env:/app/.env:ro
     mem_limit: 1g

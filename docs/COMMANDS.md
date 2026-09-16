@@ -37,14 +37,51 @@ docker exec -it rag-ai-server python -m scripts.ingest --category "솔루션/개
 ## 검색 품질 평가
 
 RAGAS는 langchain/langgraph 등 50개+ 패키지를 끌고 와서 서빙 이미지에 넣지 않았다.
-컨테이너를 재생성하면 사라지므로 평가 전에 설치한다.
+컨테이너를 재생성하면 사라지므로 평가 전에 설치한다. 채점기는 전부 RAGAS 구현이라
+이게 없으면 기록할 점수가 하나도 없다.
 
 ```bash
 docker exec rag-ai-server pip install -r /app/requirements-eval.txt
 ```
 
+**연결부터 확인한다.** `run_qa`는 36문항 x 지표 5종이라 판정 모델 호출이 수백 건이다.
+키나 지역(region)이 틀렸을 때 그걸로 알아내면 시간과 비용을 버린다.
+
 ```bash
-docker exec rag-ai-server python -m evaluation.run_qa
+docker exec rag-ai-server python -m evaluation.verify_langfuse
+```
+
+Langfuse 설정·인증·쓰기, 데이터셋, LiteLLM 판정 모델·임베딩, RAGAS 지표 5종을
+순서대로 확인하고 막히는 지점에서 해결 방법과 함께 멈춘다.
+LLM 호출을 건너뛰려면 `-e VERIFY_SKIP_LLM=1`.
+
+```bash
+docker exec rag-ai-server python -m evaluation.push_dataset_36
+docker exec -e EVAL_RUN_NAME=ragas5-baseline rag-ai-server python -m evaluation.run_qa
+```
+
+판정 모델에 보낸 프롬프트와 받은 응답까지 trace에 남기려면 `-e EVAL_TRACE_JUDGE=1`
+(기본 꺼짐 — `docs/EVALUATION.md` 2.3절).
+
+### 검색 방식 비교 (BM25 / kNN / min-max / RRF)
+
+"왜 이 검색 방식인가"에 답하는 별도 측정이다. 같은 36문항에서 방식 5종을 돌려
+Hit@5·MRR과 RAGAS 컨텍스트 지표 2종을 **한 표**에 놓는다. 답변을 생성하지 않으므로
+검색 변수만 분리된다 (`docs/EVALUATION.md` 7장).
+
+```bash
+# 먼저 3문항만 (판정 호출이 확 줄어든다)
+docker exec -e COMPARE_LIMIT=3 rag-ai-server python -m evaluation.compare_methods
+
+# 전체
+docker exec rag-ai-server python -m evaluation.compare_methods
+```
+
+산출물은 `compare_methods_ragas.csv` / `.json`이다.
+결합 계산만 ES 없이 확인하려면:
+
+```bash
+docker exec rag-ai-server python -m evaluation.retrieval_methods
 ```
 
 PowerShell에서는 `&&`를 쓸 수 없으므로 두 줄로 나눠 실행하거나 `;`로 잇는다.

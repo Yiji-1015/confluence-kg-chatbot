@@ -10,28 +10,23 @@
 import os
 import sys
 
-from app.config import settings
-
-if settings.LANGFUSE_PUBLIC_KEY:
-    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
-if settings.LANGFUSE_SECRET_KEY:
-    os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
-if settings.LANGFUSE_HOST:
-    os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_HOST
-
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from langfuse import get_client
-
+# 환경변수 설정과 연결 확인을 맡는 모듈. `run_qa`가 아니라 여기를 거친다 —
+# 문항을 업로드하는 데 Elasticsearch나 LLM 모듈이 딸려 올 이유가 없다.
+from evaluation.langfuse_client import connect
 from evaluation.dataset_items_36 import DATASET_NAME_DEFAULT, dataset_path, load_items
 
 DATASET_NAME = os.environ.get("EVAL_DATASET_NAME", DATASET_NAME_DEFAULT)
 
 
 def main():
-    client = get_client()
+    # 업서트하기 전에 연결을 확인한다. Langfuse는 이벤트를 비동기로 보내므로,
+    # 키가 틀려도 create_dataset_item()은 그 자리에서 실패하지 않는다. 36줄의
+    # "upserted ..."가 다 찍히고 맨 끝 개수 대조에서야 어긋난다.
+    client = connect()
     items = load_items()
 
     client.create_dataset(
