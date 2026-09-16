@@ -19,11 +19,26 @@ _NOISE_TAGS = ["ac:parameter", "ac:schema-version", "ac:macro-id", "ri:url", "sc
 # 코퍼스에 몇 건 없어 IDF가 극단적으로 높기 때문이다. 같은 함정이 이미 기록돼 있다:
 # 날짜 토큰 20260303이 3,211청크 중 12건뿐이라 BM25 점수를 지배한 건(CHANGELOG 2026-09-13).
 #
-# 확장자로 거르면 pdf 200건 + excel 50건 = 251건(27.1%, 고유 234종)이 남고, 전부 사람이
-# 지은 문서명이다 ("02. API 명세서", "K-water PoC WBS v4", "2022 취업규칙 신고서").
+# 확장자로 거르면 386건(41.7%, 고유 364종 — 같은 이름의 pdf/pptx 쌍이 있다)이 남고
+# 전부 사람이 지은 문서명이다
+# ("02. API 명세서", "K-water PoC WBS v4", "[LGU+] 운영자 매뉴얼-ver1.2").
 #
-# pptx(63) / docx(44) / hwp(17+8)도 같은 성격이라 넓힐 후보다. 효과를 재고 늘린다.
-_INDEXED_ATTACHMENT_EXTS = {".pdf", ".xlsx", ".xls", ".xlsm"}
+#   pdf 200 / xlsx 50            (2026-09-16 1차)
+#   pptx 63 / docx 44 / hwp 25   (2026-09-16 2차 추가)
+#
+# 2차 추가분 135건은 고유 132종 전부가 사람이 지은 이름이었고 자동 생성이 0종이라
+# 1차보다도 깨끗했다. 제안서·매뉴얼·회의록·주간업무보고·설계서가 대부분이다.
+#
+# 이름에 날짜가 붙은 것들(20240501_강소기업확인서, [LGU+] 사용자 매뉴얼-ver1.1(20250310))은
+# 그대로 둔다. 자동 생성 이름과 달리 사람이 지은 이름의 일부이고, 숫자를 이유로 버리면
+# 진짜 문서명을 잃는다.
+_INDEXED_ATTACHMENT_EXTS = {
+    ".pdf",
+    ".xlsx", ".xls", ".xlsm",
+    ".pptx", ".ppt",
+    ".docx", ".doc",
+    ".hwp", ".hwpx",
+}
 
 
 def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
