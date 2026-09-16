@@ -10,13 +10,30 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 _NOISE_TAGS = ["ac:parameter", "ac:schema-version", "ac:macro-id", "ri:url", "script", "style"]
 
 
+# 색인할 첨부파일 확장자. 사람이 이름을 지어 올리는 문서 형식만 받는다.
+#
+# 실측(2026-09-16, 670문서 / 첨부 참조 925건): 이미지가 483건(52.2%)으로 절반을 넘고
+# 그 이름은 거의 전부 자동 생성이다 (image2022-7-18_14-9-6, 스크린샷 2025-10-31 오전 10.09.35,
+# KakaoTalk_20231127_142544397). 이름을 색인해도 검색에 쓸모가 없을 뿐 아니라 해롭다.
+# 날짜·id의 긴 숫자가 그대로 토큰이 되는데(image-20260914-001446 -> image / 20260914 / 001446)
+# 코퍼스에 몇 건 없어 IDF가 극단적으로 높기 때문이다. 같은 함정이 이미 기록돼 있다:
+# 날짜 토큰 20260303이 3,211청크 중 12건뿐이라 BM25 점수를 지배한 건(CHANGELOG 2026-09-13).
+#
+# 확장자로 거르면 pdf 200건 + excel 50건 = 251건(27.1%, 고유 234종)이 남고, 전부 사람이
+# 지은 문서명이다 ("02. API 명세서", "K-water PoC WBS v4", "2022 취업규칙 신고서").
+#
+# pptx(63) / docx(44) / hwp(17+8)도 같은 성격이라 넓힐 후보다. 효과를 재고 늘린다.
+_INDEXED_ATTACHMENT_EXTS = {".pdf", ".xlsx", ".xls", ".xlsm"}
+
+
 def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Confluence REST API에서 가져온 원본 storage HTML 본문을 파싱하는 함수.
 
     [핵심 처리 내용]
-    1. 매크로 노이즈 태그 제거 (ac:parameter, ac:schema-version 등)
-    2. 첨부파일(ri:attachment) 파일명 추출
+    1. 첨부파일(ri:attachment) 파일명 추출 — pdf/excel만 (_INDEXED_ATTACHMENT_EXTS 참고)
+       노이즈 제거보다 먼저다. 매크로로 삽입된 첨부가 ac:parameter 안에 있기 때문이다.
+    2. 매크로 노이즈 태그 제거 (ac:parameter, ac:schema-version 등)
     3. 내부 문서 링크(ac:link)를 "[본문](관련문서: 제목)" 형태로 보존 + 외부 링크(<a>) 보존
     4. 표(<table>)를 rowspan/colspan까지 반영해 마크다운 표로 변환
     5. 남은 Confluence 네임스페이스 태그(ac:*, ri:* 등)는 unwrap하여 본문에 이상한 태그가 남지 않게 정리
@@ -26,16 +43,33 @@ def parse_confluence_html(html_content: str, metadata: Dict[str, Any] = None) ->
 
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # 1. 매크로 노이즈 태그 제거 (본문에 파라미터/스키마 값이 텍스트로 섞여 나오는 것 방지)
-    for tag in soup.find_all(_NOISE_TAGS):
-        tag.decompose()
-
-    # 2. 첨부파일 파일명 추출 (확장자 제거한 이름만 보존)
+    # 1. 첨부파일 파일명 추출 (pdf/excel만, 확장자 제거한 이름만 보존)
+    #
+    # 노이즈 태그 제거보다 먼저 해야 한다. Confluence의 view-file/viewpdf 매크로는 첨부
+    # 참조를 <ac:parameter ac:name="name"><ri:attachment .../></ac:parameter> 안에 넣는데,
+    # ac:parameter는 _NOISE_TAGS라 decompose 대상이다. 순서가 뒤바뀌면 매크로로 삽입된
+    # 첨부가 추출 전에 통째로 사라진다. pdf/excel은 대부분 이 매크로로 삽입되므로
+    # 손실이 특히 컸다 (2026-09-16 확인: 고유 234종 중 73종만 남았다).
+    # 같은 파일이 썸네일과 링크로 두 번 참조되는 경우가 흔해 중복을 제거한다. 중복이 남으면
+    # 그 파일명의 term frequency만 부풀어 BM25 점수가 왜곡된다. 등장 순서는 유지한다.
     attachments: List[str] = []
+    _seen_att = set()
     for att in soup.find_all("ri:attachment"):
         fname = att.get("ri:filename") or att.get("filename")
-        if fname:
-            attachments.append(os.path.splitext(fname)[0])
+        if not fname:
+            continue
+        stem, ext = os.path.splitext(fname)
+        # 확장자 판정이 먼저다. stem만 보면 형식을 알 수 없다.
+        if ext.lower() not in _INDEXED_ATTACHMENT_EXTS:
+            continue
+        stem = stem.strip()
+        if stem and stem not in _seen_att:
+            _seen_att.add(stem)
+            attachments.append(stem)
+
+    # 2. 매크로 노이즈 태그 제거 (본문에 파라미터/스키마 값이 텍스트로 섞여 나오는 것 방지)
+    for tag in soup.find_all(_NOISE_TAGS):
+        tag.decompose()
 
     # 3-1. Confluence 내부 문서 링크(ac:link) — <a href>가 아니라 ac:link/ri:page 조합으로 표현됨
     for link in soup.find_all("ac:link"):
@@ -75,7 +109,8 @@ def split_text_into_chunks(
     text: str,
     metadata: Dict[str, Any] = None,
     chunk_size: int = 800,
-    chunk_overlap: int = 150
+    chunk_overlap: int = 150,
+    attachments: List[str] = None
 ) -> List[Dict[str, Any]]:
     """
     파싱된 본문 텍스트를 RAG 검색에 적합한 작은 단위(Chunk)로 나누는 함수.
@@ -84,9 +119,23 @@ def split_text_into_chunks(
     - chunk_size=800: 한 청크당 약 800자 크기로 텍스트 분할
     - chunk_overlap=150: 문장 잘림으로 인한 문맥 단절을 방지하기 위해 앞뒤 청크가 150자씩 중복되도록 설정
     - chunk_id: '{doc_id}_chunk_{idx}' 형태로 고유 PK 생성 (Elasticsearch 덮어쓰기 및 Langfuse 추적에 활용)
+
+    attachments는 문서 단위 정보라 그 문서의 모든 청크에 같은 값이 실린다. title과 같은
+    취급이다. 어느 청크가 걸리든 첨부파일 이름으로 찾을 수 있어야 하기 때문이다.
     """
+    attachments = attachments or []
+
+    # 본문이 없고 첨부만 있는 문서. 사내 위키에는 이런 페이지가 흔하다 — 제목이 주제이고
+    # 첨부 PDF가 내용 전부인 경우다 (취업규칙, 사업자등록증, 각종 인증서).
+    # 실측(2026-09-16): pdf/excel 첨부 보유 102문서 중 29문서가 본문이 비어 있었다.
+    #
+    # 여기서 그냥 []를 돌려주면 그 문서는 색인에 아예 남지 않아 "취업규칙 어디 있어"에
+    # 아무것도 걸리지 않는다. 첨부 이름을 본문 삼아 청크 하나를 만든다. 답변 모델이
+    # 근거로 쓸 텍스트가 생기고, 임베딩도 제목과 파일명을 함께 태운다.
     if not text:
-        return []
+        if not attachments:
+            return []
+        text = "첨부파일: " + ", ".join(attachments)
 
     # 문단(\n\n) -> 줄바꿈(\n) -> 띄어쓰기( ) 순서로 자연스럽게 단락을 자르는 분할기
     splitter = RecursiveCharacterTextSplitter(
@@ -106,6 +155,7 @@ def split_text_into_chunks(
             "chunk_index": idx,                  # 청크 순서 (0, 1, 2...)
             "total_chunks": len(chunks),         # 전체 청크 개수
             "text": chunk_text,                  # 분할된 청크 텍스트 본문
+            "attachments": attachments,          # 문서에 달린 첨부파일 이름 (확장자 제외)
             "metadata": metadata or {}           # 작성자, URL, space_key 등 메타데이터
         })
 

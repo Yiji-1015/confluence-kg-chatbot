@@ -143,6 +143,9 @@ def ingest(limit: int = None, batch_size: int = 50, category: str = None,
             title=page["title"],
             text=parsed["cleaned_text"],
             metadata=parsed["metadata"],
+            # 첨부파일 이름은 ri:attachment의 속성에 들어 있어 cleaned_text에는 절대 실리지
+            # 않는다. 여기서 넘기지 않으면 파서가 뽑아둔 값이 그대로 버려진다.
+            attachments=parsed["attachments"],
         )
         if not chunks:
             # 본문이 없는 문서(예: Confluence DB 매크로만 있는 페이지)는 청크가 0개다.

@@ -94,6 +94,10 @@ def create_confluence_index(index_name: Optional[str] = None) -> bool:
                     "doc_id": {"type": "keyword"},    # 원본 Confluence 문서 ID (삭제 동기화용)
                     "title": {"type": "text", "analyzer": "nori_analyzer"},  # 문서 제목 (BM25 키워드 검색)
                     "text": {"type": "text", "analyzer": "nori_analyzer"},   # 청크 본문 (BM25 키워드 검색)
+                    # 첨부파일 이름(확장자 제외). 파일명은 ri:attachment의 속성에 있어 본문
+                    # 텍스트에 실리지 않으므로 별도 필드로 둔다. 본문에 덧붙이지 않는 이유는
+                    # 청크 경계가 밀리고 파일명이 본문 term으로 섞여 IDF가 흐려지기 때문이다.
+                    "attachments": {"type": "text", "analyzer": "nori_analyzer"},
                     "space_key": {"type": "keyword"}, # Confluence Space 식별자
                     "author": {"type": "keyword"},   # 작성자 메타데이터
                     "url": {"type": "keyword"},      # Confluence 문서 원본 URL
@@ -159,7 +163,8 @@ def index_document_chunks(
             "path": chunk.get("metadata", {}).get("path", ""),
             "updated_at": chunk.get("metadata", {}).get("updated_at") or None,
             "chunk_index": chunk["chunk_index"],
-            "total_chunks": chunk["total_chunks"]
+            "total_chunks": chunk["total_chunks"],
+            "attachments": chunk.get("attachments", [])
         }
 
         # OpenAI text-embedding-3-small 1536차원 임베딩 벡터가 함께 전달된 경우 추가
@@ -226,8 +231,19 @@ def rrf_max_score(k: Optional[int] = None) -> float:
 # 딸려와서, 후보 100청크 기준 요청당 수 MB를 전송·파싱하고 그대로 버리게 된다.
 _SEARCH_SOURCE_FIELDS = [
     "chunk_id", "doc_id", "title", "text", "url", "author", "category", "path", "space_key",
-    "updated_at",  # 최신 문서 가산점(RECENCY_BOOST_MAX) 계산용
+    "updated_at",   # 최신 문서 가산점(RECENCY_BOOST_MAX) 계산용
+    "attachments",  # 첨부파일 이름. 짧은 문자열 목록이라 text_vector와 달리 전송 비용이 없다
 ]
+
+# BM25 multi_match 대상 필드와 가중치.
+#
+# attachments^1.5: 제목(2.0)보다 약하고 본문(1.0)보다 강하다. 파일명이 질문과 겹치면 본문
+# 한 문단이 겹치는 것보다 강한 신호이지만, 제목만큼 문서를 대표하지는 않는다. best_fields라
+# 최고 점수 필드만 채택되므로 파일명으로 묻는 질문에서만 이 필드가 이긴다.
+#
+# 상수로 빼둔 이유는 가중치를 바꿔가며 지표를 재기 위함이다 (evaluation/compare_fusion.py).
+_BM25_FIELDS = ["title^2.0", "attachments^1.5", "text"]
+
 
 # 문서 하나에서 이어붙일 최대 청크 수 (비정상적으로 긴 문서가 요청을 부풀리는 것 방지)
 _MAX_CHUNKS_PER_DOC = 50
@@ -352,7 +368,7 @@ def search_hybrid(
                 {
                     "multi_match": {
                         "query": query_text,
-                        "fields": ["title^2.0", "text"],
+                        "fields": _BM25_FIELDS,
                         "type": "best_fields"
                     }
                 }
@@ -422,6 +438,7 @@ def search_hybrid(
             "path": source.get("path"),
             "space_key": source.get("space_key"),
             "updated_at": source.get("updated_at"),
+            "attachments": source.get("attachments") or [],
             "score": combined_score
         })
 
